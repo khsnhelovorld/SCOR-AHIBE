@@ -9,9 +9,9 @@ pragma solidity ^0.8.20;
 contract RevocationList {
     address public owner;
 
-    mapping(bytes32 => bytes) public revocations;
+    mapping(bytes32 => string) public revocations;
 
-    event RevocationPublished(bytes32 indexed key, bytes encryptedInfo);
+    event RevocationPublished(bytes32 indexed key, string storagePointer);
 
     error NotOwner();
     error AlreadyPublished();
@@ -29,18 +29,18 @@ contract RevocationList {
 
     /**
      * @param key keccak256(holderId || epoch)
-     * @param encryptedInfo AHIBE ciphertext produced off-chain
+     * @param storagePointer Off-chain location (e.g. IPFS CID) of the AHIBE ciphertext
      */
-    function publish(bytes32 key, bytes calldata encryptedInfo) external onlyOwner {
-        if (revocations[key].length != 0) {
+    function publish(bytes32 key, string calldata storagePointer) external onlyOwner {
+        if (bytes(revocations[key]).length != 0) {
             revert AlreadyPublished();
         }
 
-        revocations[key] = encryptedInfo;
-        emit RevocationPublished(key, encryptedInfo);
+        revocations[key] = storagePointer;
+        emit RevocationPublished(key, storagePointer);
     }
 
-    function getRevocationInfo(bytes32 key) external view returns (bytes memory) {
+    function getRevocationInfo(bytes32 key) external view returns (string memory) {
         return revocations[key];
     }
 }

@@ -14,22 +14,22 @@ describe("RevocationList", function () {
   it("stores and retrieves AHIBE ciphertext", async function () {
     const { contract } = await deployFixture();
     const key = ethers.keccak256(ethers.toUtf8Bytes("holder|epoch"));
-    const ciphertext = "0x1234";
+    const pointer = "ipfs://cid-1234";
 
-    await expect(contract.publish(key, ciphertext))
+    await expect(contract.publish(key, pointer))
       .to.emit(contract, "RevocationPublished")
-      .withArgs(key, ciphertext);
+      .withArgs(key, pointer);
 
-    expect(await contract.getRevocationInfo(key)).to.equal(ciphertext);
+    expect(await contract.getRevocationInfo(key)).to.equal(pointer);
   });
 
   it("prevents duplicate publications", async function () {
     const { contract } = await deployFixture();
     const key = ethers.keccak256(ethers.toUtf8Bytes("holder|epoch"));
-    const ciphertext = "0xdeadbeef";
+    const pointer = "ipfs://cid-deadbeef";
 
-    await contract.publish(key, ciphertext);
-    await expect(contract.publish(key, ciphertext)).to.be.revertedWithCustomError(
+    await contract.publish(key, pointer);
+    await expect(contract.publish(key, pointer)).to.be.revertedWithCustomError(
       contract,
       "AlreadyPublished"
     );
@@ -38,10 +38,10 @@ describe("RevocationList", function () {
   it("restricts publish to owner", async function () {
     const { contract, stranger } = await deployFixture();
     const key = ethers.keccak256(ethers.toUtf8Bytes("holder|epoch"));
-    const ciphertext = "0xbeef";
+    const pointer = "ipfs://cid-beef";
 
     await expect(
-      contract.connect(stranger).publish(key, ciphertext)
+      contract.connect(stranger).publish(key, pointer)
     ).to.be.revertedWithCustomError(contract, "NotOwner");
   });
 });

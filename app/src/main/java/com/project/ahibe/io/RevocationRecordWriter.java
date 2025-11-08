@@ -49,12 +49,14 @@ public class RevocationRecordWriter {
     private String toJson(RevocationRecord record) {
         String sessionKeyB64 = ByteEncoding.toBase64(record.sessionKey());
         String ciphertextHex = ByteEncoding.toHex(record.ciphertext());
+        String pointer = record.storagePointer() == null ? "" : record.storagePointer();
         return """
                 {
                   "holderId": "%s",
                   "epoch": "%s",
                   "sessionKey": "%s",
                   "ciphertext": "%s",
+                  "storagePointer": "%s",
                   "exportedAt": "%s"
                 }
                 """.formatted(
@@ -62,6 +64,7 @@ public class RevocationRecordWriter {
                 record.epoch(),
                 sessionKeyB64,
                 ciphertextHex,
+                pointer,
                 Instant.now().toString()
         );
     }

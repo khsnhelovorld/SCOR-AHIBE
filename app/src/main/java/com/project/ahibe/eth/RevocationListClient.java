@@ -3,8 +3,8 @@ package com.project.ahibe.eth;
 import org.web3j.abi.FunctionEncoder;
 import org.web3j.abi.FunctionReturnDecoder;
 import org.web3j.abi.TypeReference;
-import org.web3j.abi.datatypes.DynamicBytes;
 import org.web3j.abi.datatypes.Function;
+import org.web3j.abi.datatypes.Utf8String;
 import org.web3j.abi.datatypes.generated.Bytes32;
 import org.web3j.crypto.Hash;
 import org.web3j.protocol.Web3j;
@@ -30,12 +30,12 @@ public class RevocationListClient implements Closeable {
         this.contractAddress = contractAddress;
     }
 
-    public Optional<byte[]> fetchCiphertext(String holderId, String epoch) {
+    public Optional<String> fetchPointer(String holderId, String epoch) {
         byte[] keyBytes = computeKey(holderId, epoch);
         Function function = new Function(
                 "getRevocationInfo",
                 List.of(new Bytes32(keyBytes)),
-                List.of(new TypeReference<DynamicBytes>() {})
+                List.of(new TypeReference<Utf8String>() {})
         );
 
         String encoded = FunctionEncoder.encode(function);
@@ -54,8 +54,8 @@ public class RevocationListClient implements Closeable {
             if (decoded.isEmpty()) {
                 return Optional.empty();
             }
-            byte[] ciphertext = (byte[]) decoded.get(0).getValue();
-            return ciphertext.length == 0 ? Optional.empty() : Optional.of(ciphertext);
+            String pointer = (String) decoded.get(0).getValue();
+            return pointer.isEmpty() ? Optional.empty() : Optional.of(pointer);
         } catch (IOException e) {
             throw new IllegalStateException("Failed to call getRevocationInfo", e);
         }

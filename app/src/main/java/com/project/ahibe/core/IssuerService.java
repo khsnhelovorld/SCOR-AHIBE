@@ -1,6 +1,7 @@
 package com.project.ahibe.core;
 
 import com.project.ahibe.crypto.AhibeService;
+import com.project.ahibe.io.StoragePointer;
 import it.unisa.dia.gas.crypto.jpbc.fe.ibe.dip10.params.AHIBEDIP10SecretKeyParameters;
 
 import java.util.List;
@@ -28,7 +29,8 @@ public class IssuerService {
         Objects.requireNonNull(epoch, "epoch must not be null");
 
         var encapsulation = ahibeService.encapsulate(setup.publicKey(), List.of(holderId, epoch));
-        return new RevocationRecord(holderId, epoch, encapsulation.sessionKey(), encapsulation.ciphertext());
+        String storagePointer = StoragePointer.deriveCid(encapsulation.ciphertext());
+        return new RevocationRecord(holderId, epoch, encapsulation.sessionKey(), encapsulation.ciphertext(), storagePointer);
     }
 
     public AhibeService.SetupResult setup() {

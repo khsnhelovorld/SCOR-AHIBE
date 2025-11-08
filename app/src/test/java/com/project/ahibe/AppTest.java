@@ -12,6 +12,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AppTest {
 
@@ -31,6 +32,10 @@ class AppTest {
 
         byte[] recovered = verifier.decapsulate(epochKey, record.ciphertext());
         assertArrayEquals(record.sessionKey(), recovered, "session key mismatch after decapsulation");
+
+        assertThrows(IllegalArgumentException.class, () -> verifier.matchesPointer(null, record.storagePointer()));
+        assertThrows(IllegalArgumentException.class, () -> verifier.matchesPointer(record, null));
+        assertTrue(verifier.matchesPointer(record, record.storagePointer()));
     }
 
     @Test

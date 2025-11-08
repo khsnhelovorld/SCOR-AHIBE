@@ -24,7 +24,10 @@ async function main() {
   );
 
   console.log(`Publishing revocation for ${record.holderId} @ ${record.epoch}`);
-  const tx = await contract.publish(key, record.ciphertext);
+  if (!record.storagePointer) {
+    throw new Error("storagePointer missing in record JSON. Upload ciphertext to IPFS and set storagePointer.");
+  }
+  const tx = await contract.publish(key, record.storagePointer);
   await tx.wait();
   console.log(`Transaction hash: ${tx.hash}`);
 }

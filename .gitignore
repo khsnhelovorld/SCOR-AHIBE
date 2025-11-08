@@ -25,6 +25,7 @@
 /app/bin
 /outbox
 /deployments
+/storage
 /gradle-8.10
 /gradle-8.10-bin.zip
 
@@ -36,3 +37,4 @@
 # Integration artifacts
 /outbox
 /deployments
+/storage
