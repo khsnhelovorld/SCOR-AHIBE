@@ -8,14 +8,13 @@ import com.project.ahibe.core.VerifierService;
 import com.project.ahibe.crypto.AhibeService;
 import com.project.ahibe.eth.DeploymentRegistry;
 import com.project.ahibe.eth.RevocationListClient;
-import com.project.ahibe.io.LocalFileStorageFetcher;
+import com.project.ahibe.ipfs.IPFSService;
+import com.project.ahibe.ipfs.IPFSStorageFetcher;
+import com.project.ahibe.io.StorageFetcher;
 import com.project.ahibe.io.RevocationRecordWriter;
 
-import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.nio.file.StandardOpenOption;
 import java.util.Arrays;
 
 public class App {
@@ -25,7 +24,37 @@ public class App {
         PkgService pkg = new PkgService(ahibeService);
         var setup = pkg.bootstrap();
 
-        IssuerService issuer = new IssuerService(ahibeService, setup);
+        // Initialize IPFS service if configured
+        IPFSService ipfsService = null;
+        String ipfsHost = System.getenv("IPFS_HOST");
+        String ipfsPort = System.getenv("IPFS_PORT");
+        String ipfsUrl = System.getenv("IPFS_URL");
+
+        if (ipfsUrl != null && !ipfsUrl.isBlank()) {
+            ipfsService = new IPFSService(ipfsUrl);
+            System.out.println("Using IPFS URL: " + ipfsUrl);
+        } else if (ipfsHost != null && !ipfsHost.isBlank()) {
+            int port = ipfsPort != null ? Integer.parseInt(ipfsPort) : 5001;
+            ipfsService = new IPFSService(ipfsHost, port);
+            System.out.println("Using IPFS at " + ipfsHost + ":" + port);
+        } else {
+            System.out.println("IPFS env vars not set. Trying default http://127.0.0.1:5001 ...");
+            ipfsService = new IPFSService("127.0.0.1", 5001);
+        }
+
+        // Check IPFS availability if configured
+        if (ipfsService != null) {
+            if (ipfsService.isAvailable()) {
+                System.out.println("IPFS node is available.");
+            } else {
+                System.err.println("Warning: IPFS node is not available at configured/default address. Falling back to simulated CID.");
+                ipfsService = null;
+            }
+        }
+
+        IssuerService issuer = ipfsService != null 
+            ? new IssuerService(ahibeService, setup, ipfsService)
+            : new IssuerService(ahibeService, setup);
         HolderService holder = new HolderService(ahibeService, setup.publicKey());
         VerifierService verifier = new VerifierService(ahibeService);
 
@@ -34,31 +63,26 @@ public class App {
 
         var rootKey = issuer.issueRootKey(holderId);
         var epochKey = holder.deriveEpochKey(rootKey, epoch);
+        
+        System.out.println("Publishing revocation certificate...");
         RevocationRecord record = issuer.publishRevocation(holderId, epoch);
+        System.out.printf("Revocation certificate uploaded. IPFS CID: %s%n", record.storagePointer());
 
         byte[] recovered = verifier.decapsulate(epochKey, record.ciphertext());
 
         System.out.printf("Recovered session key matches: %s%n",
                 Arrays.equals(record.sessionKey(), recovered) ? "YES" : "NO");
         System.out.printf("Ciphertext length (bytes): %d%n", record.ciphertext().length);
-        System.out.printf("Derived storage pointer (simulated CID): %s%n", record.storagePointer());
 
-        Path storageDir = Paths.get("storage");
-        try {
-            Files.createDirectories(storageDir);
-            Path blob = storageDir.resolve(record.storagePointer() + ".bin");
-            Files.write(
-                    blob,
-                    record.ciphertext(),
-                    StandardOpenOption.CREATE,
-                    StandardOpenOption.TRUNCATE_EXISTING,
-                    StandardOpenOption.WRITE
-            );
-            System.out.printf("Ciphertext blob exported to: %s%n", blob.toAbsolutePath());
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to persist ciphertext blob", e);
+        // Use IPFS fetcher if available, otherwise fallback to local file fetcher
+        StorageFetcher storageFetcher;
+        if (ipfsService != null) {
+            storageFetcher = new IPFSStorageFetcher(ipfsService);
+            System.out.println("Using IPFS storage fetcher for verification.");
+        } else {
+            System.err.println("Warning: IPFS not available. Cannot verify from IPFS. Please configure IPFS for full functionality.");
+            storageFetcher = null;
         }
-        LocalFileStorageFetcher storageFetcher = new LocalFileStorageFetcher(storageDir);
 
         RevocationRecordWriter writer = new RevocationRecordWriter(Paths.get("outbox"));
         try {
@@ -68,25 +92,43 @@ public class App {
             throw new RuntimeException("Failed to export revocation record", e);
         }
 
+        // Verify from blockchain and IPFS
         DeploymentRegistry registry = new DeploymentRegistry(Paths.get("deployments"));
-        registry.load("hardhat").ifPresent(deployment -> {
-            String rpcUrl = System.getenv().getOrDefault("ETH_RPC_URL", "http://127.0.0.1:8545");
-            try (RevocationListClient client = new RevocationListClient(rpcUrl, deployment.address())) {
-                verifier.fetchPointer(client, holderId, epoch).ifPresent(pointer -> {
-                    System.out.printf(
-                            "On-chain pointer matches local ciphertext: %s%n",
-                            verifier.matchesPointer(record, pointer) ? "YES" : "NO"
-                    );
-                });
-
-                verifier.fetchAndDecapsulate(client, storageFetcher, epochKey, holderId, epoch)
-                        .ifPresent(onChainRecovered -> System.out.printf(
-                                "On-chain decapsulation matches session key: %s%n",
-                                Arrays.equals(onChainRecovered, record.sessionKey()) ? "YES" : "NO"
-                        ));
-            } catch (Exception e) {
-                System.err.println("Failed to verify on-chain pointer or ciphertext: " + e.getMessage());
-            }
-        });
+        // Try to load deployment from any network (hardhat, sepolia, mumbai, etc.)
+        String[] networks = {"hardhat", "sepolia", "mumbai", "goerli"};
+        for (String network : networks) {
+            registry.load(network).ifPresent(deployment -> {
+                String rpcUrl = System.getenv().getOrDefault("ETH_RPC_URL", 
+                    network.equals("hardhat") ? "http://127.0.0.1:8545" : "");
+                if (rpcUrl.isEmpty() && !network.equals("hardhat")) {
+                    System.out.println("Skipping network " + network + " - ETH_RPC_URL not set");
+                    return;
+                }
+                System.out.println("Verifying from blockchain network: " + network);
+                System.out.println("Contract address: " + deployment.address());
+                try (RevocationListClient client = new RevocationListClient(rpcUrl, deployment.address())) {
+                    verifier.fetchPointer(client, holderId, epoch).ifPresent(pointer -> {
+                        System.out.printf("On-chain CID: %s%n", pointer);
+                        System.out.printf(
+                                "On-chain pointer matches local CID: %s%n",
+                                record.storagePointer().equals(pointer) ? "YES" : "NO"
+                        );
+                        
+                        // Download from IPFS and verify using delegate key
+                        if (storageFetcher != null) {
+                            storageFetcher.fetch(pointer).ifPresent(ciphertext -> {
+                                byte[] onChainRecovered = verifier.decapsulate(epochKey, ciphertext);
+                                System.out.printf(
+                                        "On-chain decapsulation (from IPFS) matches session key: %s%n",
+                                        Arrays.equals(onChainRecovered, record.sessionKey()) ? "YES" : "NO"
+                                );
+                            });
+                        }
+                    });
+                } catch (Exception e) {
+                    System.err.println("Failed to verify on-chain pointer or ciphertext: " + e.getMessage());
+                }
+            });
+        }
     }
 }

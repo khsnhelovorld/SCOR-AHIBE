@@ -27,6 +27,8 @@ dependencies {
     implementation libs.bouncycastle
     implementation libs.web3j.core
     implementation libs.jackson.databind
+    // IPFS client - using HTTP directly
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
 }
 
 testing {
@@ -49,4 +51,47 @@ java {
 application {
     // Define the main class for the application.
     mainClass = 'com.project.ahibe.App'
+}
+
+// Task for running the Holder application
+task runHolder(type: JavaExec) {
+    group = 'application'
+    description = 'Run the Holder application to derive and export delegate keys'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.project.ahibe.HolderApp'
+    // Pass arguments via -PappArgs="arg1,arg2,arg3"
+    doFirst {
+        if (project.hasProperty('appArgs')) {
+            args(project.property('appArgs').split(','))
+        }
+    }
+}
+
+// Task for running the Verifier application
+task runVerifier(type: JavaExec) {
+    group = 'application'
+    description = 'Run the Verifier application to verify revocation status'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.project.ahibe.VerifierApp'
+    // Pass arguments via -PappArgs="arg1,arg2,arg3"
+    doFirst {
+        if (project.hasProperty('appArgs')) {
+            args(project.property('appArgs').split(','))
+        }
+    }
+}
+
+// Task for running the combined Demo application (Holder + Verifier in same JVM)
+task runDemo(type: JavaExec) {
+    group = 'application'
+    description = 'Run combined demo: Holder generates key, then Verifier verifies (same JVM)'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.project.ahibe.DemoApp'
+    standardInput = System.in  // Allow user input for pause
+    // Pass arguments via -PappArgs="arg1,arg2"
+    doFirst {
+        if (project.hasProperty('appArgs')) {
+            args(project.property('appArgs').split(','))
+        }
+    }
 }
