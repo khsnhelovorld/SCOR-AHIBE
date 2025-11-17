@@ -1,4 +1,4 @@
-# SCOR-AHIBE Playground
+# SCOR-AHIBE
 
 Tổng hợp mã nguồn minh họa kiến trúc SCOR-AHIBE:
 
@@ -52,7 +52,7 @@ export IPFS_URL=http://your-ipfs-node:5001
 ```
 ## Setup Blockchain Testnet
 
-1. **Copy environment template**:
+1. **Copy environment template**: (Nếu chạy local thì không cần)
    ```bash
    cp env.example .env
    ```
@@ -595,5 +595,3 @@ Note: In demo mode, keys must be generated in the same session.
 Educational project for demonstrating SCOR-AHIBE architecture.
 
 ---
-
-**Questions or Issues?** Please refer to the inline documentation in the source code or consult the original AHIBE/SCOR research papers.

@@ -1,3 +1,4 @@
+/** 
 package com.project.ahibe;
 
 import com.project.ahibe.core.HolderService;
@@ -5,10 +6,8 @@ import com.project.ahibe.core.IssuerService;
 import com.project.ahibe.core.PkgService;
 import com.project.ahibe.core.VerifierService;
 import com.project.ahibe.crypto.AhibeService;
-import com.project.ahibe.eth.DeploymentMetadata;
 import com.project.ahibe.eth.DeploymentRegistry;
 import com.project.ahibe.eth.RevocationListClient;
-import com.project.ahibe.io.KeySerializer;
 import com.project.ahibe.ipfs.IPFSService;
 import com.project.ahibe.ipfs.IPFSStorageFetcher;
 import it.unisa.dia.gas.crypto.jpbc.fe.ibe.dip10.params.AHIBEDIP10PublicKeyParameters;
@@ -18,13 +17,6 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Optional;
 
-/**
- * Combined Demo Application: Runs Holder and Verifier in the same JVM process.
- * This demonstrates the complete flow with in-memory key storage.
- * 
- * Usage: java DemoApp <holderId> <epoch>
- * Example: java DemoApp holder:alice@example.com 2025-10-30
- */
 public class DemoApp {
     public static void main(String[] args) {
         try {
@@ -252,5 +244,231 @@ public class DemoApp {
         }
         if (bytes.length > 16) result.append("...");
         return result.toString();
+    }
+}
+*/
+
+package com.project.ahibe;
+
+import com.project.ahibe.core.HolderService;
+import com.project.ahibe.core.IssuerService;
+import com.project.ahibe.core.PkgService;
+import com.project.ahibe.core.VerifierService;
+import com.project.ahibe.crypto.AhibeService;
+import com.project.ahibe.eth.DeploymentRegistry;
+import com.project.ahibe.eth.RevocationListClient;
+import com.project.ahibe.ipfs.IPFSService;
+import com.project.ahibe.ipfs.IPFSStorageFetcher;
+import it.unisa.dia.gas.crypto.jpbc.fe.ibe.dip10.params.AHIBEDIP10PublicKeyParameters;
+import it.unisa.dia.gas.crypto.jpbc.fe.ibe.dip10.params.AHIBEDIP10SecretKeyParameters;
+
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+
+/**
+ * Demo Application with BENCHMARKING (1000 iterations)
+ */
+public class DemoApp {
+    // Statistics for each operation
+    static class OperationStats {
+        String operation;
+        String note;
+        List<Double> times = new ArrayList<>();
+        
+        OperationStats(String op, String n) {
+            this.operation = op;
+            this.note = n;
+        }
+        
+        double getAverage() {
+            return times.stream().mapToDouble(Double::doubleValue).average().orElse(0.0);
+        }
+        
+        double getMin() {
+            return times.stream().mapToDouble(Double::doubleValue).min().orElse(0.0);
+        }
+        
+        double getMax() {
+            return times.stream().mapToDouble(Double::doubleValue).max().orElse(0.0);
+        }
+        
+        double getStdDev() {
+            double avg = getAverage();
+            double variance = times.stream()
+                .mapToDouble(t -> Math.pow(t - avg, 2))
+                .average()
+                .orElse(0.0);
+            return Math.sqrt(variance);
+        }
+    }
+
+    static Map<String, OperationStats> statsMap = new HashMap<>();
+    static final int ITERATIONS = 1000;
+
+    public static void main(String[] args) {
+        try {
+            if (args.length < 2) {
+                System.err.println("Usage: java DemoApp <holderId> <epoch>");
+                System.err.println("Example: java DemoApp holder:alice@example.com 2025-10-30");
+                System.exit(1);
+            }
+
+            String holderId = args[0];
+            String epoch = args[1];
+
+            System.out.println("==========================================================================================");
+            System.out.println("         SCOR-AHIBE BENCHMARK RUNNER (1000 iterations)         ");
+            System.out.println("==========================================================================================");
+            System.out.println();
+            System.out.println("Holder ID: " + holderId);
+            System.out.println("Epoch:     " + epoch);
+            System.out.println("Iterations: " + ITERATIONS);
+            System.out.println();
+
+            // ==================== ONE-TIME SETUP ====================
+            System.out.println("[Setup] Initializing system (one-time)...");
+            long tStart = System.nanoTime();
+            AhibeService ahibeService = new AhibeService(160, 3);
+            double setupTime = (System.nanoTime() - tStart) / 1_000_000.0;
+            System.out.printf("   -> System Setup: %.4f ms (one-time)%n", setupTime);
+
+            tStart = System.nanoTime();
+            PkgService pkg = new PkgService(ahibeService);
+            AhibeService.SetupResult setup = pkg.bootstrap();
+            AHIBEDIP10PublicKeyParameters publicKey = setup.publicKey();
+            double pkgTime = (System.nanoTime() - tStart) / 1_000_000.0;
+            System.out.printf("   -> PKG Bootstrap: %.4f ms (one-time)%n", pkgTime);
+
+            tStart = System.nanoTime();
+            IssuerService issuer = new IssuerService(ahibeService, setup);
+            AHIBEDIP10SecretKeyParameters rootKey = issuer.issueRootKey(holderId);
+            double issuerTime = (System.nanoTime() - tStart) / 1_000_000.0;
+            System.out.printf("   -> Issuer Root Key Gen: %.4f ms (one-time)%n", issuerTime);
+
+            // Setup services for benchmarking
+            HolderService holder = new HolderService(ahibeService, publicKey);
+            
+            IPFSService ipfsService = initializeIPFS();
+            if (ipfsService == null) throw new RuntimeException("IPFS not found");
+            
+            String network = System.getenv().getOrDefault("NETWORK", "hardhat");
+            String rpcUrl = System.getenv().getOrDefault("ETH_RPC_URL", "http://127.0.0.1:8545");
+            
+            Path deploymentsPath = Paths.get("deployments");
+            if (!deploymentsPath.toFile().exists()) {
+                deploymentsPath = Paths.get("..").resolve("deployments");
+            }
+            DeploymentRegistry registry = new DeploymentRegistry(deploymentsPath);
+            String contractAddress = registry.load(network).orElseThrow().address();
+
+            // Pre-fetch CID and ciphertext once (for verifier operations)
+            String cid;
+            byte[] ciphertext;
+            try (RevocationListClient client = new RevocationListClient(rpcUrl, contractAddress)) {
+                VerifierService verifierService = new VerifierService(ahibeService);
+                Optional<String> cidOpt = verifierService.fetchPointer(client, holderId, epoch);
+                if (cidOpt.isEmpty()) throw new RuntimeException("CID not found on chain");
+                cid = cidOpt.get();
+                
+                IPFSStorageFetcher fetcher = new IPFSStorageFetcher(ipfsService);
+                ciphertext = fetcher.fetch(cid).orElseThrow();
+            }
+
+            // ==================== BENCHMARK LOOP ====================
+            System.out.println();
+            System.out.println("[Benchmark] Running " + ITERATIONS + " iterations...");
+            System.out.println("Progress: ");
+
+            for (int i = 0; i < ITERATIONS; i++) {
+                // Holder: Delegate Key Generation
+                tStart = System.nanoTime();
+                AHIBEDIP10SecretKeyParameters delegateKey = holder.deriveEpochKey(rootKey, epoch);
+                recordTime("Holder: Delegate Key Gen", tStart, "Derive SK_{H||Epoch} (Off-chain)");
+
+                // Verifier: Query Blockchain
+                tStart = System.nanoTime();
+                try (RevocationListClient client = new RevocationListClient(rpcUrl, contractAddress)) {
+                    VerifierService verifierService = new VerifierService(ahibeService);
+                    verifierService.fetchPointer(client, holderId, epoch);
+                }
+                recordTime("Verifier: Query Blockchain", tStart, "Get CID (View call)");
+
+                // Verifier: Fetch IPFS
+                tStart = System.nanoTime();
+                IPFSStorageFetcher fetcher = new IPFSStorageFetcher(ipfsService);
+                fetcher.fetch(cid);
+                recordTime("Verifier: Fetch IPFS", tStart, "Download Ciphertext (" + ciphertext.length + " bytes)");
+
+                // Verifier: Decrypt
+                tStart = System.nanoTime();
+                VerifierService verifierService = new VerifierService(ahibeService);
+                verifierService.decapsulate(delegateKey, ciphertext);
+                recordTime("Verifier: Decrypt (Decaps)", tStart, "Pairing operation");
+
+                // Progress indicator
+                if ((i + 1) % 100 == 0) {
+                    System.out.print(".");
+                    if ((i + 1) % 500 == 0) {
+                        System.out.println(" " + (i + 1) + "/" + ITERATIONS);
+                    }
+                }
+            }
+            System.out.println(" " + ITERATIONS + "/" + ITERATIONS + " completed!");
+            System.out.println();
+
+            // ==================== PRINT REPORT ====================
+            printReport();
+
+        } catch (Exception e) {
+            System.err.println("Error: " + e.getMessage());
+            e.printStackTrace();
+            System.exit(1);
+        }
+    }
+
+    private static void recordTime(String op, long startTimeNano, String note) {
+        long duration = System.nanoTime() - startTimeNano;
+        double ms = duration / 1_000_000.0;
+        
+        statsMap.computeIfAbsent(op, k -> new OperationStats(op, note)).times.add(ms);
+    }
+
+    private static void printReport() {
+        System.out.println();
+        System.out.println("==========================================================================================");
+        System.out.println("|                    SCOR-AHIBE PERFORMANCE REPORT (1000 iterations)                    |");
+        System.out.println("|========================================================================================|");
+        System.out.println();
+        System.out.println(String.format("| %-35s | %-10s | %-10s | %-10s | %-10s | %-20s |",
+            "Operation", "Avg (ms)", "Min (ms)", "Max (ms)", "StdDev", "Note"));
+        System.out.println("|-------------------------------------|------------|------------|------------|------------|----------------------|");
+        
+        for (OperationStats stats : statsMap.values()) {
+            System.out.println(String.format("| %-35s | %10.4f | %10.4f | %10.4f | %10.4f | %-20s |",
+                stats.operation,
+                stats.getAverage(),
+                stats.getMin(),
+                stats.getMax(),
+                stats.getStdDev(),
+                stats.note));
+        }
+        
+        System.out.println("|========================================================================================|");
+        System.out.println();
+        System.out.println("NOTE: Add Gas costs from Hardhat logs manually to this table.");
+        System.out.println("==========================================================================================");
+    }
+
+    private static IPFSService initializeIPFS() {
+        String ipfsUrl = System.getenv("IPFS_URL");
+        if (ipfsUrl != null && !ipfsUrl.isBlank()) {
+            return new IPFSService(ipfsUrl);
+        }
+        return new IPFSService("127.0.0.1", 5001);
     }
 }
