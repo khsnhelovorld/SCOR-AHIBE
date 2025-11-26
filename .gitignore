@@ -1,43 +1,55 @@
-# Node modules
-/node_modules
+# -------------------------------------------------------------
+# General artifacts & secrets
+# -------------------------------------------------------------
+node_modules/
+dist/
+bundle/
+coverage/
 
-# Environment variables (contains private keys!)
 .env
+.env.*
+*.log
 
-# Compilation output
-/dist
+# -------------------------------------------------------------
+# Hardhat / TypeScript outputs
+# -------------------------------------------------------------
+artifacts/
+cache/
+types/
+typechain/
 
-# pnpm deploy output
-/bundle
+# Deployment metadata generated per environment
+deployments/
 
-# Hardhat Build Artifacts
-/artifacts
+# -------------------------------------------------------------
+# Java / Gradle outputs
+# -------------------------------------------------------------
+.gradle/
+app/build/
+app/bin/
+app/outbox/
+app/tmp/
 
-# Hardhat compilation (v2) support directory
-/cache
+# Local storage artifacts
+outbox/
+storage/
 
-# Typechain output
-/types
+# Gradle wrappers downloaded at runtime
+gradle-*/
+gradle-*-bin.zip
 
-# Hardhat coverage reports
-/coverage
+# Keep only curated jPBC jars shipped in repo
+libs/*
+!libs/jars
+!libs/jars/**
 
-# Java/Gradle artifacts
-/.gradle
-/app/build
-/app/bin
-/outbox
-/deployments
-/storage
-/gradle-8.10
-/gradle-8.10-bin.zip
-
-# Keep only required jPBC jars
-/libs/*
-!/libs/jars
-!/libs/jars/**
-
-# Integration artifacts
-/outbox
-/deployments
-/storage
+# -------------------------------------------------------------
+# IDE / OS specific
+# -------------------------------------------------------------
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+.DS_Store
+Thumbs.db
