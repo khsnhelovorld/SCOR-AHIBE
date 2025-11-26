@@ -107,16 +107,20 @@ public class App {
                 System.out.println("Verifying from blockchain network: " + network);
                 System.out.println("Contract address: " + deployment.address());
                 try (RevocationListClient client = new RevocationListClient(rpcUrl, deployment.address())) {
-                    verifier.fetchPointer(client, holderId, epoch).ifPresent(pointer -> {
-                        System.out.printf("On-chain CID: %s%n", pointer);
+                    // Use new verification logic with time comparison
+                    VerifierService.VerificationResult result = verifier.verifyRevocation(client, holderId, epoch);
+                    System.out.println("Verification result: " + result.message());
+                    
+                    if (!result.isValid() && result.pointer() != null && !result.pointer().isEmpty()) {
+                        System.out.printf("On-chain CID: %s%n", result.pointer());
                         System.out.printf(
                                 "On-chain pointer matches local CID: %s%n",
-                                record.storagePointer().equals(pointer) ? "YES" : "NO"
+                                record.storagePointer().equals(result.pointer()) ? "YES" : "NO"
                         );
                         
                         // Download from IPFS and verify using delegate key
                         if (storageFetcher != null) {
-                            storageFetcher.fetch(pointer).ifPresent(ciphertext -> {
+                            storageFetcher.fetch(result.pointer()).ifPresent(ciphertext -> {
                                 byte[] onChainRecovered = verifier.decapsulate(epochKey, ciphertext);
                                 System.out.printf(
                                         "On-chain decapsulation (from IPFS) matches session key: %s%n",
@@ -124,7 +128,7 @@ public class App {
                                 );
                             });
                         }
-                    });
+                    }
                 } catch (Exception e) {
                     System.err.println("Failed to verify on-chain pointer or ciphertext: " + e.getMessage());
                 }
