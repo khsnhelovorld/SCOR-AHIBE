@@ -1,6 +1,6 @@
 # SCOR-AHIBE
 
-Implementation of SCOR-AHIBE architecture demonstrating off-chain revocation certificate storage with on-chain pointer management.
+SCOR-AHIBE (Self-Certifying Off-chain Revocation for Attribute-based Hierarchical Identity-Based Encryption) is an experimental reference implementation that accompanies our research on verifiable revocation for AHIBE credentials. The system instantiates the full end-to-end workflow—from PKG bootstrap and cryptographic encapsulation to IPFS persistence and on-chain pointer management—allowing practitioners to reproduce the protocol, benchmark cryptographic costs, and validate the static-key revocation model described in the paper.
 
 ## Requirements
 
@@ -128,18 +128,43 @@ This creates `deployments/sepolia.json` with the contract address.
 #### Step 4: Generate and Publish Revocation Certificate
 
 ```bash
-# Set IPFS configuration (if not in .env)
+# Set IPFS / RPC configuration (if not in .env)
 $env:IPFS_HOST="127.0.0.1"
 $env:IPFS_PORT="5001"
-$env:ETH_RPC_URL="https://rpc.sepolia.org"
+$env:ETH_RPC_URL="https://ethereum-sepolia-rpc.publicnode.com"
+$env:NETWORK="sepolia" # Required when running runDemo/Verifier flows
 
-# Generate revocation certificate and upload to IPFS
+# Generate revocation certificate and upload to IPFS using default sample IDs (holder:alice@example.com, epoch 2025-10-30)
 ./gradlew run
 
 # Publish CID to blockchain
 $env:RECORD_PATH="app/outbox/<filename>.json"
 npm run hardhat:publish:sepolia
+
+# Benchmark / verify full flow once the record exists on-chain
+./gradlew runDemo -PappArgs="holder:alice@example.com,2025-10-30"
 ```
+
+### Revocation Flow (Static Key + Epoch)
+
+The current contract and off-chain services follow the static-key architecture illustrated in the design update:
+
+1. **Issuer / Publisher**
+   - Uses AHIBE to encrypt with the pair `(holderId, epoch)`.
+   - Uploads ciphertext to IPFS and receives a CID.
+   - Publishes on-chain with `key = keccak256(holderId)` (static per holder) and payload `{epoch, cid}`.
+2. **Verifier**
+   - Derives the same static key from `holderId` and fetches the record.
+   - Compares the requested `T_check` (epoch provided to `VerifierApp`/`runDemo`) against the stored `T_rev`.
+   - Only if `T_check >= T_rev` does it download the IPFS payload and decapsulate to confirm revocation.
+
+Because the mapping key is static, you must ensure the **same `holderId` string** is reused for:
+
+- Java generation (`run`/`runDemo`/`HolderApp`)
+- Publishing (`RECORD_PATH` file name reflects the holder/epoch)
+- Verification (`VerifierApp` or `runDemo` arguments, or `npm run hardhat:check*` scripts)
+
+If you change the identifiers, regenerate the record and republish before running the verifier.
 
 ## Basic Commands
 

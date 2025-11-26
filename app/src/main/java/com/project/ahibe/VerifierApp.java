@@ -119,10 +119,10 @@ public class VerifierApp {
             try (RevocationListClient client = new RevocationListClient(rpcUrl, contractAddress)) {
                 VerifierService verifier = new VerifierService(ahibeService);
 
-                Optional<String> cidOpt = verifier.fetchPointer(client, holderId, epoch);
+                VerifierService.VerificationResult verification = verifier.verifyRevocation(client, holderId, epoch);
 
-                if (cidOpt.isEmpty()) {
-                    System.out.println("      ℹ No revocation record found on blockchain");
+                if (verification.isValid()) {
+                    System.out.println("      ℹ " + verification.message());
                     System.out.println();
                     System.out.println("╔════════════════════════════════════════════════════════════════╗");
                     System.out.println("║                  VERIFICATION RESULT: NOT REVOKED              ║");
@@ -131,12 +131,14 @@ public class VerifierApp {
                     System.out.println("Status:    NOT REVOKED");
                     System.out.println("Holder:    " + holderId);
                     System.out.println("Epoch:     " + epoch);
-                    System.out.println("Reason:    No revocation certificate found on blockchain");
+                    System.out.println("Reason:    " + verification.message());
                     System.out.println();
                     return;
                 }
 
-                String cid = cidOpt.get();
+                String cid = Optional.ofNullable(verification.pointer())
+                        .filter(ptr -> !ptr.isBlank())
+                        .orElseThrow(() -> new IllegalStateException("Revocation record missing storage pointer"));
                 System.out.println("      ✓ Found revocation CID on blockchain: " + cid);
 
                 // Download ciphertext from IPFS

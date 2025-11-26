@@ -29,40 +29,47 @@ async function main() {
 
   const contract = await hre.ethers.getContractAt("RevocationList", contractAddress, issuer);
 
-  // Test with the expected holder ID and epoch
+  // Test with the expected holder ID and check epoch
   const holderId = "holder:alice@example.com";
-  const epoch = "2025-10-30";
+  const checkEpoch = "2025-10-30"; // T_check
 
-  const key = hre.ethers.keccak256(
-    hre.ethers.concat([
-      hre.ethers.toUtf8Bytes(holderId),
-      hre.ethers.toUtf8Bytes(epoch),
-    ])
-  );
+  // Use static key: keccak256(holderId) only
+  const key = hre.ethers.keccak256(hre.ethers.toUtf8Bytes(holderId));
 
   console.log(`\nChecking revocation for:`);
   console.log(`  Holder ID: ${holderId}`);
-  console.log(`  Epoch: ${epoch}`);
-  console.log(`  Key (bytes32): ${key}`);
+  console.log(`  Check Epoch (T_check): ${checkEpoch}`);
+  console.log(`  Static Key (keccak256 of holderId): ${key}`);
 
   try {
-    const cid = await contract.getRevocationInfo(key);
+    const [revEpochDays, cid] = await contract.getRevocationInfo(key);
     
-    if (cid === "" || cid === null) {
-      console.log("\n❌ RESULT: No revocation record found (empty string returned)");
-      console.log("\nThis means either:");
-      console.log("  1. The Hardhat node was restarted after publishing (state lost)");
-      console.log("  2. The transaction was not confirmed properly");
-      console.log("  3. The key computation is different between publish and query");
-      
-      console.log("\nTo fix:");
-      console.log("  1. Ensure Hardhat node is still running from when you published");
-      console.log("  2. Or republish the revocation:");
-      console.log(`     $env:RECORD_PATH="app/outbox/holder_alice_example_com__2025-10-30.json"`);
-      console.log(`     npm run hardhat:publish`);
+    if (revEpochDays === 0n && (cid === "" || cid === null)) {
+      console.log("\n✓ RESULT: No revocation record found");
+      console.log("  → Credential is VALID (never revoked)");
     } else {
+      // Convert check epoch to days
+      const checkEpochDate = new Date(checkEpoch + "T00:00:00Z");
+      const checkEpochDays = Math.floor(checkEpochDate.getTime() / (1000 * 60 * 60 * 24));
+      
+      // Convert revEpochDays (BigInt) to number for comparison
+      const revEpochDaysNum = Number(revEpochDays);
+      
       console.log(`\n✓ RESULT: Revocation record found!`);
+      console.log(`  Revocation Epoch (T_rev): ${revEpochDaysNum} days since 1970-01-01`);
+      console.log(`  Check Epoch (T_check): ${checkEpochDays} days since 1970-01-01`);
       console.log(`  IPFS CID: ${cid}`);
+      
+      // Time comparison logic
+      if (checkEpochDays < revEpochDaysNum) {
+        console.log(`\n✓ VALID: Check epoch (${checkEpochDays}) is BEFORE revocation epoch (${revEpochDaysNum})`);
+        console.log("  → Credential is VALID (check time occurred before revocation)");
+      } else {
+        console.log(`\n⚠ POTENTIALLY REVOKED: Check epoch (${checkEpochDays}) is AT OR AFTER revocation epoch (${revEpochDaysNum})`);
+        console.log("  → Credential may be REVOKED");
+        console.log("  → Download from IPFS and decrypt with AHIBE for final confirmation");
+        console.log(`  → IPFS CID: ${cid}`);
+      }
     }
   } catch (error) {
     console.error("\n❌ ERROR querying contract:");

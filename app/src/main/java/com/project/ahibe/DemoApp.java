@@ -141,14 +141,19 @@ public class DemoApp {
             System.out.println("[4/6] Querying blockchain for revocation record...");
             try (RevocationListClient client = new RevocationListClient(rpcUrl, contractAddress)) {
                 VerifierService verifier = new VerifierService(ahibeService);
-                Optional<String> cidOpt = verifier.fetchPointer(client, holderId, epoch);
+                VerifierService.VerificationResult verification = verifier.verifyRevocation(client, holderId, epoch);
 
-                if (cidOpt.isEmpty()) {
-                    System.out.println("      ℹ No revocation record found on blockchain");
+                if (verification.isValid()) {
+                    System.out.println("      ℹ " + verification.message());
                     System.out.println();
                     System.out.println("╔════════════════════════════════════════════════════════════════╗");
                     System.out.println("║                  VERIFICATION RESULT: NOT REVOKED              ║");
                     System.out.println("╚════════════════════════════════════════════════════════════════╝");
+                    System.out.println();
+                    System.out.println("Status:    NOT REVOKED");
+                    System.out.println("Holder:    " + holderId);
+                    System.out.println("Epoch:     " + epoch);
+                    System.out.println("Reason:    " + verification.message());
                     System.out.println();
                     System.out.println("⚠ Possible reasons:");
                     System.out.println("  1. Revocation was never published to this contract");
@@ -165,7 +170,9 @@ public class DemoApp {
                     return;
                 }
 
-                String cid = cidOpt.get();
+                String cid = Optional.ofNullable(verification.pointer())
+                        .filter(ptr -> !ptr.isBlank())
+                        .orElseThrow(() -> new IllegalStateException("Revocation pointer missing in record"));
                 System.out.println("      ✓ Found revocation CID: " + cid);
 
                 // Download from IPFS
@@ -367,16 +374,21 @@ public class DemoApp {
             String contractAddress = registry.load(network).orElseThrow().address();
 
             // Pre-fetch CID and ciphertext once (for verifier operations)
+            VerifierService verifierService = new VerifierService(ahibeService);
             String cid;
             byte[] ciphertext;
             try (RevocationListClient client = new RevocationListClient(rpcUrl, contractAddress)) {
-                VerifierService verifierService = new VerifierService(ahibeService);
-                Optional<String> cidOpt = verifierService.fetchPointer(client, holderId, epoch);
-                if (cidOpt.isEmpty()) throw new RuntimeException("CID not found on chain");
-                cid = cidOpt.get();
+                VerifierService.VerificationResult verification = verifierService.verifyRevocation(client, holderId, epoch);
+                if (verification.isValid()) {
+                    throw new RuntimeException("Credential not revoked for epoch " + epoch + ": " + verification.message());
+                }
+
+                cid = Optional.ofNullable(verification.pointer())
+                        .filter(ptr -> !ptr.isBlank())
+                        .orElseThrow(() -> new RuntimeException("Revocation record missing storage pointer"));
                 
                 IPFSStorageFetcher fetcher = new IPFSStorageFetcher(ipfsService);
-                ciphertext = fetcher.fetch(cid).orElseThrow();
+                ciphertext = fetcher.fetch(cid).orElseThrow(() -> new RuntimeException("Failed to fetch ciphertext from IPFS"));
             }
 
             // ==================== BENCHMARK LOOP ====================
@@ -393,8 +405,7 @@ public class DemoApp {
                 // Verifier: Query Blockchain
                 tStart = System.nanoTime();
                 try (RevocationListClient client = new RevocationListClient(rpcUrl, contractAddress)) {
-                    VerifierService verifierService = new VerifierService(ahibeService);
-                    verifierService.fetchPointer(client, holderId, epoch);
+                    verifierService.verifyRevocation(client, holderId, epoch);
                 }
                 recordTime("Verifier: Query Blockchain", tStart, "Get CID (View call)");
 
@@ -406,7 +417,6 @@ public class DemoApp {
 
                 // Verifier: Decrypt
                 tStart = System.nanoTime();
-                VerifierService verifierService = new VerifierService(ahibeService);
                 verifierService.decapsulate(delegateKey, ciphertext);
                 recordTime("Verifier: Decrypt (Decaps)", tStart, "Pairing operation");
 
