@@ -117,7 +117,9 @@ public class VerifierService {
     }
 
     /**
-     * @deprecated Use fetchRecord() and verifyRevocation() instead.
+     * @deprecated Use fetchRecord() / verifyRevocation() instead.
+     * Provides backward compatibility by reading the static-key record
+     * and returning only the pointer component.
      */
     @Deprecated
     public Optional<String> fetchPointer(RevocationListClient client,
@@ -127,7 +129,10 @@ public class VerifierService {
         Objects.requireNonNull(holderId, "holderId must not be null");
         Objects.requireNonNull(epoch, "epoch must not be null");
 
-        return client.fetchPointer(holderId, epoch);
+        return client.fetchRecord(holderId)
+                .filter(record -> !record.isEmpty())
+                .map(com.project.ahibe.eth.RevocationRecord::ptr)
+                .filter(ptr -> ptr != null && !ptr.isBlank());
     }
 
     /**
