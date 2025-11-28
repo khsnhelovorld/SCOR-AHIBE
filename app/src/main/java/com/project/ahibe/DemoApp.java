@@ -12,7 +12,6 @@ import com.project.ahibe.eth.DeploymentRegistry;
 import com.project.ahibe.eth.RevocationListClient;
 import com.project.ahibe.ipfs.IPFSService;
 import com.project.ahibe.ipfs.IPFSStorageFetcher;
-import com.project.ahibe.io.AggregatedRevocationIndex;
 import com.project.ahibe.crypto.bls12.BLS12PublicKey;
 import com.project.ahibe.crypto.bls12.BLS12SecretKey;
 
@@ -33,10 +32,13 @@ import java.util.Optional;
 /**
  * Demo Application with BENCHMARKING (1000 iterations)
  * 
+ * SCOR-AHIBE: 1 on-chain key = 1 off-chain file.
+ * Direct CID lookup with O(1) complexity.
+ * No aggregation or Merkle proofs.
+ * 
  * Features:
  * - Detailed timing for each operation
  * - CSV export for benchmark results
- * - Separate JSON parse time tracking
  * - Statistics: avg, min, max, stddev
  */
 public class DemoApp {
@@ -149,8 +151,6 @@ public class DemoApp {
             VerifierService verifierService = new VerifierService(ahibeService);
             String cid;
             byte[] ciphertext;
-            String aggregatedIndexPointer = null;
-            String aggregatedLeafHash = null;
             try (RevocationListClient client = new RevocationListClient(rpcUrl, contractAddress)) {
                 VerifierService.VerificationResult verification = verifierService.verifyRevocation(client, holderId, epoch);
                 if (verification.isValid()) {
@@ -160,18 +160,11 @@ public class DemoApp {
                 cid = Optional.ofNullable(verification.pointer())
                         .filter(ptr -> !ptr.isBlank())
                         .orElseThrow(() -> new RuntimeException("Revocation record missing storage pointer"));
-                
-                boolean aggregated = verification.aggregated();
-                String leafHash = verification.leafHash();
 
+                // Direct CID fetch - exactly one file per verification (SCOR-AHIBE principle)
                 IPFSStorageFetcher fetcher = new IPFSStorageFetcher(ipfsService);
-                byte[] payload = fetcher.fetch(cid).orElseThrow(() -> new RuntimeException("Failed to fetch ciphertext from IPFS"));
-                ciphertext = aggregated
-                        ? resolveAggregatedCiphertext(payload, holderId, epoch, leafHash)
-                        : payload;
+                ciphertext = fetcher.fetch(cid).orElseThrow(() -> new RuntimeException("Failed to fetch ciphertext from IPFS"));
                 System.out.printf("   -> Ciphertext size: %d bytes%n", CryptoMetrics.ciphertextSize(ciphertext));
-                aggregatedIndexPointer = aggregated ? cid : null;
-                aggregatedLeafHash = aggregated ? leafHash : null;
             }
 
             // ==================== BENCHMARK LOOP ====================
@@ -192,19 +185,11 @@ public class DemoApp {
                 }
                 recordTime("Verifier: Query Blockchain", tStart, "Get CID (View call)");
 
-                // Verifier: Fetch IPFS (with separate parse timing)
+                // Verifier: Fetch IPFS (direct CID fetch - O(1) lookup)
                 tStart = System.nanoTime();
                 IPFSStorageFetcher fetcher = new IPFSStorageFetcher(ipfsService);
-                byte[] payload = fetcher.fetch(cid).orElse(null);
-                long fetchEnd = System.nanoTime();
+                fetcher.fetch(cid).orElse(null);
                 recordTime("Verifier: Fetch IPFS", tStart, "Download (" + ciphertext.length + " bytes)");
-                
-                // Separate JSON parse time for aggregated indices
-                if (payload != null && aggregatedIndexPointer != null) {
-                    long parseStart = System.nanoTime();
-                    resolveAggregatedCiphertext(payload, holderId, epoch, aggregatedLeafHash);
-                    recordTime("Verifier: JSON Parse", parseStart, "Parse aggregated index");
-                }
 
                 // Verifier: Decrypt
                 tStart = System.nanoTime();
@@ -336,17 +321,5 @@ public class DemoApp {
             return new IPFSService(ipfsUrl);
         }
         return new IPFSService("127.0.0.1", 5001);
-    }
-
-    private static byte[] resolveAggregatedCiphertext(byte[] indexBytes,
-                                                      String holderId,
-                                                      String epoch,
-                                                      String expectedLeafHash) {
-        AggregatedRevocationIndex index = AggregatedRevocationIndex.fromJson(indexBytes);
-        return index.findEntry(holderId, epoch)
-                .filter(entry -> expectedLeafHash == null
-                        || expectedLeafHash.equalsIgnoreCase(entry.leafHashHex()))
-                .map(AggregatedRevocationIndex.Entry::ciphertextBytes)
-                .orElseThrow(() -> new IllegalStateException("Aggregated index missing entry for " + holderId));
     }
 }

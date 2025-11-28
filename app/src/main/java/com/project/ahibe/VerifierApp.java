@@ -8,7 +8,6 @@ import com.project.ahibe.crypto.config.PairingProfile;
 import com.project.ahibe.eth.DeploymentMetadata;
 import com.project.ahibe.eth.DeploymentRegistry;
 import com.project.ahibe.eth.RevocationListClient;
-import com.project.ahibe.io.AggregatedRevocationIndex;
 import com.project.ahibe.io.KeySerializer;
 import com.project.ahibe.ipfs.IPFSService;
 import com.project.ahibe.ipfs.IPFSStorageFetcher;
@@ -22,6 +21,10 @@ import java.util.Optional;
 /**
  * Verifier application: receives delegate key from Holder, queries blockchain, 
  * downloads ciphertext from IPFS, and verifies revocation status.
+ * 
+ * SCOR-AHIBE: 1 on-chain key = 1 off-chain file.
+ * Direct CID lookup with O(1) complexity.
+ * No aggregation or Merkle proofs.
  * 
  * This application demonstrates the complete verification flow:
  * 1. Import delegate key from Holder
@@ -147,12 +150,8 @@ public class VerifierApp {
                         .filter(ptr -> !ptr.isBlank())
                         .orElseThrow(() -> new IllegalStateException("Revocation record missing storage pointer"));
                 System.out.println("      ✓ Found revocation pointer on blockchain: " + cid);
-                System.out.println("      Aggregated index: " + (verification.aggregated() ? "YES" : "NO"));
-                if (verification.leafHash() != null) {
-                    System.out.println("      Leaf hash: " + verification.leafHash());
-                }
 
-                // Download ciphertext from IPFS
+                // Download ciphertext from IPFS (direct CID - O(1) lookup)
                 System.out.println();
                 System.out.println("[7/7] Downloading and decrypting revocation certificate...");
                 IPFSStorageFetcher fetcher = new IPFSStorageFetcher(ipfsService);
@@ -170,9 +169,8 @@ public class VerifierApp {
                     System.exit(1);
                 }
 
-                byte[] ciphertext = verification.aggregated()
-                        ? resolveAggregatedCiphertext(payloadOpt.get(), holderId, epoch, verification.leafHash())
-                        : payloadOpt.get();
+                // Direct ciphertext - no aggregation processing needed
+                byte[] ciphertext = payloadOpt.get();
                 System.out.println("      ✓ Downloaded ciphertext from IPFS (" + ciphertext.length + " bytes)");
 
                 // Decrypt using delegate key
@@ -263,17 +261,5 @@ public class VerifierApp {
             result.append("...");
         }
         return result.toString();
-    }
-
-    private static byte[] resolveAggregatedCiphertext(byte[] indexBytes,
-                                                      String holderId,
-                                                      String epoch,
-                                                      String expectedLeafHash) {
-        AggregatedRevocationIndex index = AggregatedRevocationIndex.fromJson(indexBytes);
-        return index.findEntry(holderId, epoch)
-                .filter(entry -> expectedLeafHash == null
-                        || expectedLeafHash.equalsIgnoreCase(entry.leafHashHex()))
-                .map(AggregatedRevocationIndex.Entry::ciphertextBytes)
-                .orElseThrow(() -> new IllegalStateException("Aggregated index missing matching entry for " + holderId));
     }
 }

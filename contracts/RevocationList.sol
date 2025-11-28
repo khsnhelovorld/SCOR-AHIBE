@@ -4,6 +4,13 @@ pragma solidity ^0.8.20;
 /**
  * @title RevocationList Contract (SCOR-AHIBE)
  * @notice Append-only mapping where Issuer publishes AHIBE-encrypted revocation entries.
+ *         
+ *         SCOR-AHIBE Principle: 1 on-chain key = 1 off-chain file.
+ *         - Each holder has exactly one ciphertext file on IPFS
+ *         - Direct CID pointer lookup with O(1) complexity
+ *         - No aggregation or Merkle proofs
+ *         - IPFS CID integrity is sufficient
+ *         
  *         Supports un-revoke mechanism via version tracking and status field.
  *         Anyone can read records, only the contract owner can add/modify entries.
  */
@@ -15,16 +22,14 @@ contract RevocationList {
 
     struct Record {
         uint256 epoch;       // Effective revocation epoch (T_rev) - days since 1970-01-01
-        string ptr;          // IPFS CID or storage pointer (index or ciphertext)
-        bytes32 leafHash;    // Integrity hash of the ciphertext or aggregated leaf
-        bool aggregated;     // true if ptr references an aggregated index
+        string ptr;          // IPFS CID - direct pointer to single ciphertext file
         uint256 version;     // Version counter for supersede model
         Status status;       // ACTIVE = not revoked, REVOKED = currently revoked
     }
 
     mapping(bytes32 => Record) public revocations; // Static key: keccak256(holderId)
 
-    event RevocationPublished(bytes32 indexed key, uint256 epoch, string storagePointer, bytes32 leafHash, bool aggregated);
+    event RevocationPublished(bytes32 indexed key, uint256 epoch, string storagePointer);
     event StatusChanged(bytes32 indexed key, Status status, uint256 version);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
     event PublisherAdded(address indexed account);
@@ -78,13 +83,12 @@ contract RevocationList {
 
     /**
      * @notice Publish a revocation record (marks holder as REVOKED)
+     * @dev SCOR-AHIBE: Each holder has exactly one IPFS file (1:1 mapping)
      * @param key keccak256(holderId) - static key based on holder ID only
      * @param epoch Effective revocation epoch (T_rev) - days since 1970-01-01
-     * @param storagePointer Off-chain location (e.g. IPFS CID) of the AHIBE ciphertext
-     * @param leafHash Integrity hash of the ciphertext
-     * @param aggregated true if storagePointer references an aggregated index
+     * @param storagePointer IPFS CID pointing to the holder's ciphertext file
      */
-    function publish(bytes32 key, uint256 epoch, string calldata storagePointer, bytes32 leafHash, bool aggregated) external onlyPublisher {
+    function publish(bytes32 key, uint256 epoch, string calldata storagePointer) external onlyPublisher {
         Record storage record = revocations[key];
         
         // Prevent duplicate publish if currently REVOKED
@@ -99,13 +103,11 @@ contract RevocationList {
         revocations[key] = Record({
             epoch: epoch,
             ptr: storagePointer,
-            leafHash: leafHash,
-            aggregated: aggregated,
             version: newVersion,
             status: Status.REVOKED
         });
         
-        emit RevocationPublished(key, epoch, storagePointer, leafHash, aggregated);
+        emit RevocationPublished(key, epoch, storagePointer);
         emit StatusChanged(key, Status.REVOKED, newVersion);
     }
 
@@ -130,26 +132,21 @@ contract RevocationList {
     /**
      * @notice Batch publish multiple revocation records in a single transaction
      * @dev Gas efficient for publishing multiple revocations at once
+     *      SCOR-AHIBE: Each holder still gets their own individual IPFS file
      * @param keys Array of keccak256(holderId) values
      * @param epochs Array of revocation epochs
-     * @param storagePointers Array of IPFS CIDs or storage pointers
-     * @param leafHashes Array of leaf hashes for Merkle proof validation
-     * @param aggregatedFlags Array indicating if each record is aggregated
+     * @param storagePointers Array of IPFS CIDs (one per holder)
      */
     function publishBatch(
         bytes32[] calldata keys,
         uint256[] calldata epochs,
-        string[] calldata storagePointers,
-        bytes32[] calldata leafHashes,
-        bool[] calldata aggregatedFlags
+        string[] calldata storagePointers
     ) external onlyPublisher {
         uint256 length = keys.length;
         require(length > 0, "Empty batch");
         require(
             epochs.length == length && 
-            storagePointers.length == length && 
-            leafHashes.length == length && 
-            aggregatedFlags.length == length,
+            storagePointers.length == length,
             "Array length mismatch"
         );
         
@@ -167,56 +164,11 @@ contract RevocationList {
             revocations[key] = Record({
                 epoch: epochs[i],
                 ptr: storagePointers[i],
-                leafHash: leafHashes[i],
-                aggregated: aggregatedFlags[i],
                 version: newVersion,
                 status: Status.REVOKED
             });
             
-            emit RevocationPublished(key, epochs[i], storagePointers[i], leafHashes[i], aggregatedFlags[i]);
-            emit StatusChanged(key, Status.REVOKED, newVersion);
-        }
-    }
-
-    /**
-     * @notice Batch publish with same storage pointer (for aggregated index)
-     * @dev More gas efficient when all records point to the same aggregated index
-     * @param keys Array of keccak256(holderId) values
-     * @param epochs Array of revocation epochs
-     * @param sharedPointer Common IPFS CID for the aggregated index
-     * @param leafHashes Array of leaf hashes for Merkle proof validation
-     */
-    function publishBatchAggregated(
-        bytes32[] calldata keys,
-        uint256[] calldata epochs,
-        string calldata sharedPointer,
-        bytes32[] calldata leafHashes
-    ) external onlyPublisher {
-        uint256 length = keys.length;
-        require(length > 0, "Empty batch");
-        require(epochs.length == length && leafHashes.length == length, "Array length mismatch");
-        
-        for (uint256 i = 0; i < length; i++) {
-            bytes32 key = keys[i];
-            Record storage record = revocations[key];
-            
-            // Skip if currently REVOKED (no duplicate publish)
-            if (record.version > 0 && record.status == Status.REVOKED) {
-                continue;
-            }
-            
-            uint256 newVersion = record.version + 1;
-            
-            revocations[key] = Record({
-                epoch: epochs[i],
-                ptr: sharedPointer,
-                leafHash: leafHashes[i],
-                aggregated: true,
-                version: newVersion,
-                status: Status.REVOKED
-            });
-            
-            emit RevocationPublished(key, epochs[i], sharedPointer, leafHashes[i], true);
+            emit RevocationPublished(key, epochs[i], storagePointers[i]);
             emit StatusChanged(key, Status.REVOKED, newVersion);
         }
     }
@@ -225,22 +177,18 @@ contract RevocationList {
      * @notice Get full revocation record including version and status
      * @param key keccak256(holderId)
      * @return epoch The revocation epoch
-     * @return ptr The storage pointer (IPFS CID)
-     * @return leafHash The integrity hash
-     * @return aggregated Whether this points to an aggregated index
+     * @return ptr The IPFS CID (direct pointer to ciphertext file)
      * @return version The record version (for supersede tracking)
      * @return status The current status (ACTIVE or REVOKED)
      */
     function getRevocationInfo(bytes32 key) external view returns (
         uint256 epoch, 
         string memory ptr, 
-        bytes32 leafHash, 
-        bool aggregated,
         uint256 version,
         Status status
     ) {
         Record memory record = revocations[key];
-        return (record.epoch, record.ptr, record.leafHash, record.aggregated, record.version, record.status);
+        return (record.epoch, record.ptr, record.version, record.status);
     }
 
     /**
@@ -250,13 +198,11 @@ contract RevocationList {
     function getLatestRecord(bytes32 key) external view returns (
         uint256 epoch,
         string memory ptr,
-        bytes32 leafHash,
-        bool aggregated,
         uint256 version,
         Status status
     ) {
         Record memory record = revocations[key];
-        return (record.epoch, record.ptr, record.leafHash, record.aggregated, record.version, record.status);
+        return (record.epoch, record.ptr, record.version, record.status);
     }
 
     /**

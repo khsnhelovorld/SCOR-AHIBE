@@ -3,6 +3,7 @@ package com.project.ahibe;
 import com.project.ahibe.core.BatchRevocationService;
 import com.project.ahibe.core.IssuerService;
 import com.project.ahibe.core.PkgService;
+import com.project.ahibe.core.RevocationRecord;
 import com.project.ahibe.core.BatchRevocationService.Request;
 import com.project.ahibe.crypto.AhibeService;
 import com.project.ahibe.crypto.config.PairingProfile;
@@ -17,7 +18,11 @@ import java.util.stream.Collectors;
 
 /**
  * CLI utility that reads a CSV file with {@code holderId,epoch} pairs, generates AHIBE
- * revocations for all entries, and uploads a single aggregated index to IPFS.
+ * revocations for all entries, and uploads individual files to IPFS.
+ * 
+ * SCOR-AHIBE: 1 on-chain key = 1 off-chain file.
+ * Each holder gets their own individual IPFS file.
+ * No aggregation or shared indices.
  *
  * Usage:
  * {@code ./gradlew runBatchPublisher -PappArgs="batch.csv"}
@@ -62,19 +67,28 @@ public class BatchPublisherApp {
 
         BatchRevocationService batchService = new BatchRevocationService(
                 issuer,
-                Optional.ofNullable(ipfsService),
-                Paths.get("outbox/indices")
+                Optional.ofNullable(ipfsService)
         );
 
         BatchRevocationService.BatchResult result = batchService.publishBatch(requests);
 
-        System.out.println("Aggregated index created:");
-        System.out.println("  • Index ID: " + result.index().indexId());
-        System.out.println("  • Entries : " + result.index().entries().size());
-        System.out.println("  • Merkle  : " + result.index().merkleRoot());
-        System.out.println("  • Pointer : " + result.indexPointer());
-        System.out.println("  • File    : outbox/indices (latest json)");
-        System.out.println("\nUse scripts/publishRevocation.js with the aggregated index to register each entry on-chain.");
+        System.out.println("╔════════════════════════════════════════════════════════════════╗");
+        System.out.println("║              BATCH REVOCATION RESULTS (SCOR-AHIBE)             ║");
+        System.out.println("╚════════════════════════════════════════════════════════════════╝");
+        System.out.println();
+        System.out.println("Processed: " + requests.size() + " revocation requests");
+        System.out.println("Success:   " + result.successCount());
+        System.out.println("Failed:    " + result.failureCount());
+        System.out.println();
+        System.out.println("Individual CIDs (1:1 holder-to-file mapping):");
+        for (RevocationRecord record : result.records()) {
+            System.out.printf("  • %s [%s] -> %s%n", 
+                record.holderId(), 
+                record.epoch(), 
+                record.storagePointer());
+        }
+        System.out.println();
+        System.out.println("Use scripts/publishRevocation.js to register each entry on-chain.");
     }
 
     private static IPFSService initializeIPFS() {
@@ -96,10 +110,9 @@ public class BatchPublisherApp {
         }
 
         if (!ipfsService.isAvailable()) {
-            System.err.println("Warning: IPFS node is not reachable. Aggregated file will remain local.");
+            System.err.println("Warning: IPFS node is not reachable. Files will remain local.");
             return null;
         }
         return ipfsService;
     }
 }
-

@@ -1,6 +1,13 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
 
+/**
+ * Tests for RevocationList smart contract.
+ * 
+ * SCOR-AHIBE: 1 on-chain key = 1 off-chain file.
+ * Direct CID lookup with O(1) complexity.
+ * No aggregation or Merkle proofs.
+ */
 describe("RevocationList", function () {
   async function deployFixture() {
     const [issuer, publisher, stranger] = await ethers.getSigners();
@@ -18,16 +25,14 @@ describe("RevocationList", function () {
     const epoch = 20000; // days since 1970-01-01
     const pointer = "ipfs://cid-1234";
 
-    const leafHash = ethers.keccak256(ethers.toUtf8Bytes("leaf"));
-    await expect(contract.publish(key, epoch, pointer, leafHash, false))
+    // SCOR-AHIBE simplified: publish(key, epoch, pointer)
+    await expect(contract.publish(key, epoch, pointer))
       .to.emit(contract, "RevocationPublished")
-      .withArgs(key, epoch, pointer, leafHash, false);
+      .withArgs(key, epoch, pointer);
 
-    const [retrievedEpoch, retrievedPtr, retrievedLeaf, aggregated, version, status] = await contract.getRevocationInfo(key);
+    const [retrievedEpoch, retrievedPtr, version, status] = await contract.getRevocationInfo(key);
     expect(retrievedEpoch).to.equal(epoch);
     expect(retrievedPtr).to.equal(pointer);
-    expect(retrievedLeaf).to.equal(leafHash);
-    expect(aggregated).to.equal(false);
     expect(version).to.equal(1); // First publish is version 1
     expect(status).to.equal(1); // REVOKED = 1
   });
@@ -38,9 +43,8 @@ describe("RevocationList", function () {
     const epoch = 20000;
     const pointer = "ipfs://cid-deadbeef";
 
-    const leafHash = ethers.keccak256(ethers.toUtf8Bytes("leaf"));
-    await contract.publish(key, epoch, pointer, leafHash, true);
-    await expect(contract.publish(key, epoch, pointer, leafHash, true)).to.be.revertedWithCustomError(
+    await contract.publish(key, epoch, pointer);
+    await expect(contract.publish(key, epoch, pointer)).to.be.revertedWithCustomError(
       contract,
       "AlreadyPublished"
     );
@@ -52,9 +56,8 @@ describe("RevocationList", function () {
     const epoch = 20000;
     const pointer = "ipfs://cid-beef";
 
-    const leafHash = ethers.keccak256(ethers.toUtf8Bytes("leaf"));
     await expect(
-      contract.connect(stranger).publish(key, epoch, pointer, leafHash, false)
+      contract.connect(stranger).publish(key, epoch, pointer)
     ).to.be.revertedWithCustomError(contract, "NotAuthorized");
   });
 
@@ -67,16 +70,16 @@ describe("RevocationList", function () {
     const key = ethers.keccak256(ethers.toUtf8Bytes("holder:bob@example.com"));
     const epoch = 21000;
     const pointer = "ipfs://cid-bulk";
-    const leafHash = ethers.keccak256(ethers.toUtf8Bytes("leaf2"));
 
-    await expect(contract.connect(publisher).publish(key, epoch, pointer, leafHash, true))
+    await expect(contract.connect(publisher).publish(key, epoch, pointer))
       .to.emit(contract, "RevocationPublished");
 
     await expect(contract.removePublisher(publisher.address))
       .to.emit(contract, "PublisherRemoved")
       .withArgs(publisher.address);
 
-    await expect(contract.connect(publisher).publish(key, epoch, pointer, leafHash, true))
+    const key2 = ethers.keccak256(ethers.toUtf8Bytes("holder:bob2@example.com"));
+    await expect(contract.connect(publisher).publish(key2, epoch, pointer))
       .to.be.revertedWithCustomError(contract, "NotAuthorized");
   });
 
@@ -99,11 +102,9 @@ describe("RevocationList", function () {
     const { contract } = await deployFixture();
     const key = ethers.keccak256(ethers.toUtf8Bytes("holder:nonexistent@example.com"));
 
-    const [epoch, ptr, leafHash, aggregated, version, status] = await contract.getRevocationInfo(key);
+    const [epoch, ptr, version, status] = await contract.getRevocationInfo(key);
     expect(epoch).to.equal(0);
     expect(ptr).to.equal("");
-    expect(leafHash).to.equal(ethers.ZeroHash);
-    expect(aggregated).to.equal(false);
     expect(version).to.equal(0);
     expect(status).to.equal(0); // ACTIVE = 0
   });
@@ -114,13 +115,12 @@ describe("RevocationList", function () {
       const key = ethers.keccak256(ethers.toUtf8Bytes("holder:unrevoke@example.com"));
       const epoch = 20000;
       const pointer = "ipfs://cid-unrevoke";
-      const leafHash = ethers.keccak256(ethers.toUtf8Bytes("unrevoke-leaf"));
 
       // First, publish revocation
-      await contract.publish(key, epoch, pointer, leafHash, false);
+      await contract.publish(key, epoch, pointer);
       
       // Verify it's revoked
-      let [, , , , version, status] = await contract.getRevocationInfo(key);
+      let [, , version, status] = await contract.getRevocationInfo(key);
       expect(version).to.equal(1);
       expect(status).to.equal(1); // REVOKED
       expect(await contract.isRevoked(key)).to.be.true;
@@ -131,7 +131,7 @@ describe("RevocationList", function () {
         .withArgs(key, 0, 2); // ACTIVE = 0, version = 2
 
       // Verify it's now active
-      [, , , , version, status] = await contract.getRevocationInfo(key);
+      [, , version, status] = await contract.getRevocationInfo(key);
       expect(version).to.equal(2);
       expect(status).to.equal(0); // ACTIVE
       expect(await contract.isRevoked(key)).to.be.false;
@@ -150,10 +150,9 @@ describe("RevocationList", function () {
       const key = ethers.keccak256(ethers.toUtf8Bytes("holder:double-unrevoke@example.com"));
       const epoch = 20000;
       const pointer = "ipfs://cid-double";
-      const leafHash = ethers.keccak256(ethers.toUtf8Bytes("double-leaf"));
 
       // Publish and un-revoke
-      await contract.publish(key, epoch, pointer, leafHash, false);
+      await contract.publish(key, epoch, pointer);
       await contract.unrevoke(key);
 
       // Try to un-revoke again
@@ -166,10 +165,9 @@ describe("RevocationList", function () {
       const key = ethers.keccak256(ethers.toUtf8Bytes("holder:re-revoke@example.com"));
       const epoch1 = 20000;
       const pointer1 = "ipfs://cid-first";
-      const leafHash1 = ethers.keccak256(ethers.toUtf8Bytes("first-leaf"));
 
       // Initial revocation
-      await contract.publish(key, epoch1, pointer1, leafHash1, false);
+      await contract.publish(key, epoch1, pointer1);
       expect(await contract.isRevoked(key)).to.be.true;
 
       // Un-revoke
@@ -179,12 +177,11 @@ describe("RevocationList", function () {
       // Re-revoke with new data
       const epoch2 = 20100;
       const pointer2 = "ipfs://cid-second";
-      const leafHash2 = ethers.keccak256(ethers.toUtf8Bytes("second-leaf"));
       
       // After un-revoke, publish should work (supersede model)
-      await contract.publish(key, epoch2, pointer2, leafHash2, false);
+      await contract.publish(key, epoch2, pointer2);
       
-      const [retrievedEpoch, retrievedPtr, , , version, status] = await contract.getRevocationInfo(key);
+      const [retrievedEpoch, retrievedPtr, version, status] = await contract.getRevocationInfo(key);
       expect(retrievedEpoch).to.equal(epoch2);
       expect(retrievedPtr).to.equal(pointer2);
       expect(version).to.equal(3); // Third version
@@ -202,45 +199,15 @@ describe("RevocationList", function () {
         ethers.keccak256(ethers.toUtf8Bytes("holder:batch3@example.com"))
       ];
       const epochs = [20000, 20001, 20002];
+      // SCOR-AHIBE: Each holder has individual CID (1:1 mapping)
       const pointers = ["ipfs://cid1", "ipfs://cid2", "ipfs://cid3"];
-      const leafHashes = [
-        ethers.keccak256(ethers.toUtf8Bytes("leaf1")),
-        ethers.keccak256(ethers.toUtf8Bytes("leaf2")),
-        ethers.keccak256(ethers.toUtf8Bytes("leaf3"))
-      ];
-      const aggregatedFlags = [false, false, false];
 
-      await contract.publishBatch(keys, epochs, pointers, leafHashes, aggregatedFlags);
+      await contract.publishBatch(keys, epochs, pointers);
 
       for (let i = 0; i < keys.length; i++) {
-        const [epoch, ptr, leafHash, aggregated, version, status] = await contract.getRevocationInfo(keys[i]);
+        const [epoch, ptr, version, status] = await contract.getRevocationInfo(keys[i]);
         expect(epoch).to.equal(epochs[i]);
         expect(ptr).to.equal(pointers[i]);
-        expect(version).to.equal(1);
-        expect(status).to.equal(1); // REVOKED
-      }
-    });
-
-    it("publishes batch aggregated with shared pointer", async function () {
-      const { contract } = await deployFixture();
-      const keys = [
-        ethers.keccak256(ethers.toUtf8Bytes("holder:agg1@example.com")),
-        ethers.keccak256(ethers.toUtf8Bytes("holder:agg2@example.com"))
-      ];
-      const epochs = [20000, 20001];
-      const sharedPointer = "ipfs://shared-index-cid";
-      const leafHashes = [
-        ethers.keccak256(ethers.toUtf8Bytes("agg-leaf1")),
-        ethers.keccak256(ethers.toUtf8Bytes("agg-leaf2"))
-      ];
-
-      await contract.publishBatchAggregated(keys, epochs, sharedPointer, leafHashes);
-
-      for (let i = 0; i < keys.length; i++) {
-        const [epoch, ptr, , aggregated, version, status] = await contract.getRevocationInfo(keys[i]);
-        expect(epoch).to.equal(epochs[i]);
-        expect(ptr).to.equal(sharedPointer);
-        expect(aggregated).to.be.true;
         expect(version).to.equal(1);
         expect(status).to.equal(1); // REVOKED
       }
@@ -252,9 +219,8 @@ describe("RevocationList", function () {
       const key2 = ethers.keccak256(ethers.toUtf8Bytes("holder:check2@example.com"));
       const key3 = ethers.keccak256(ethers.toUtf8Bytes("holder:check3@example.com")); // Not revoked
       
-      const leafHash = ethers.keccak256(ethers.toUtf8Bytes("check-leaf"));
-      await contract.publish(key1, 20000, "ipfs://check1", leafHash, false);
-      await contract.publish(key2, 20001, "ipfs://check2", leafHash, false);
+      await contract.publish(key1, 20000, "ipfs://check1");
+      await contract.publish(key2, 20001, "ipfs://check2");
 
       const results = await contract.batchCheckRevocation([key1, key2, key3]);
       expect(results[0]).to.be.true;  // key1 is revoked
@@ -282,8 +248,7 @@ describe("RevocationList", function () {
       const { contract, publisher } = await deployFixture();
       await contract.addPublisher(publisher.address);
       const key = ethers.keccak256(ethers.toUtf8Bytes("holder:test@example.com"));
-      const leafHash = ethers.keccak256(ethers.toUtf8Bytes("test-leaf"));
-      await expect(contract.connect(publisher).publish(key, 20000, "QmTest", leafHash, false))
+      await expect(contract.connect(publisher).publish(key, 20000, "QmTest"))
         .to.emit(contract, "RevocationPublished");
       const info = await contract.getRevocationInfo(key);
       expect(info[0]).to.equal(20000n);
@@ -292,17 +257,15 @@ describe("RevocationList", function () {
     it("Should reject non-publisher", async function () {
       const { contract, stranger } = await deployFixture();
       const key = ethers.keccak256(ethers.toUtf8Bytes("holder:reject@example.com"));
-      const leafHash = ethers.keccak256(ethers.toUtf8Bytes("reject-leaf"));
       await expect(
-        contract.connect(stranger).publish(key, 20000, "QmTest", leafHash, false)
+        contract.connect(stranger).publish(key, 20000, "QmTest")
       ).to.be.revertedWithCustomError(contract, "NotAuthorized");
     });
 
     it("Should allow owner to publish directly without being a publisher", async function () {
       const { contract, issuer } = await deployFixture();
       const key = ethers.keccak256(ethers.toUtf8Bytes("holder:owner@example.com"));
-      const leafHash = ethers.keccak256(ethers.toUtf8Bytes("owner-leaf"));
-      await expect(contract.connect(issuer).publish(key, 20000, "QmOwner", leafHash, false))
+      await expect(contract.connect(issuer).publish(key, 20000, "QmOwner"))
         .to.emit(contract, "RevocationPublished");
     });
 
@@ -330,10 +293,9 @@ describe("RevocationList", function () {
       const { contract, publisher } = await deployFixture();
       await contract.addPublisher(publisher.address);
       const key = ethers.keccak256(ethers.toUtf8Bytes("holder:remove@example.com"));
-      const leafHash = ethers.keccak256(ethers.toUtf8Bytes("remove-leaf"));
       
       // Publisher can publish
-      await contract.connect(publisher).publish(key, 20000, "QmBefore", leafHash, false);
+      await contract.connect(publisher).publish(key, 20000, "QmBefore");
       
       // Remove publisher
       await contract.removePublisher(publisher.address);
@@ -342,7 +304,7 @@ describe("RevocationList", function () {
       // Publisher cannot publish new records
       const key2 = ethers.keccak256(ethers.toUtf8Bytes("holder:remove2@example.com"));
       await expect(
-        contract.connect(publisher).publish(key2, 20001, "QmAfter", leafHash, false)
+        contract.connect(publisher).publish(key2, 20001, "QmAfter")
       ).to.be.revertedWithCustomError(contract, "NotAuthorized");
     });
 
@@ -351,10 +313,9 @@ describe("RevocationList", function () {
       await contract.addPublisher(publisher.address);
       
       const key = ethers.keccak256(ethers.toUtf8Bytes("holder:pub-unrevoke@example.com"));
-      const leafHash = ethers.keccak256(ethers.toUtf8Bytes("pub-unrevoke-leaf"));
       
       // Publisher publishes
-      await contract.connect(publisher).publish(key, 20000, "QmPubUnrevoke", leafHash, false);
+      await contract.connect(publisher).publish(key, 20000, "QmPubUnrevoke");
       
       // Publisher un-revokes
       await expect(contract.connect(publisher).unrevoke(key))
@@ -365,14 +326,48 @@ describe("RevocationList", function () {
     it("Should reject stranger from un-revoking", async function () {
       const { contract, stranger } = await deployFixture();
       const key = ethers.keccak256(ethers.toUtf8Bytes("holder:stranger-unrevoke@example.com"));
-      const leafHash = ethers.keccak256(ethers.toUtf8Bytes("stranger-leaf"));
       
       // Owner publishes
-      await contract.publish(key, 20000, "QmStranger", leafHash, false);
+      await contract.publish(key, 20000, "QmStranger");
       
       // Stranger tries to un-revoke
       await expect(contract.connect(stranger).unrevoke(key))
         .to.be.revertedWithCustomError(contract, "NotAuthorized");
+    });
+  });
+
+  describe("SCOR-AHIBE Principle", function () {
+    it("Each holder has unique CID (1:1 mapping)", async function () {
+      const { contract } = await deployFixture();
+      
+      // Different holders should have different CIDs
+      const key1 = ethers.keccak256(ethers.toUtf8Bytes("holder:user1@example.com"));
+      const key2 = ethers.keccak256(ethers.toUtf8Bytes("holder:user2@example.com"));
+      
+      await contract.publish(key1, 20000, "ipfs://unique-cid-1");
+      await contract.publish(key2, 20000, "ipfs://unique-cid-2");
+      
+      const [, ptr1] = await contract.getRevocationInfo(key1);
+      const [, ptr2] = await contract.getRevocationInfo(key2);
+      
+      expect(ptr1).to.equal("ipfs://unique-cid-1");
+      expect(ptr2).to.equal("ipfs://unique-cid-2");
+      expect(ptr1).to.not.equal(ptr2);
+    });
+
+    it("Direct O(1) lookup for revocation status", async function () {
+      const { contract } = await deployFixture();
+      const key = ethers.keccak256(ethers.toUtf8Bytes("holder:o1lookup@example.com"));
+      
+      await contract.publish(key, 20000, "ipfs://direct-cid");
+      
+      // Single call to get all information
+      const [epoch, ptr, version, status] = await contract.getRevocationInfo(key);
+      
+      expect(epoch).to.equal(20000);
+      expect(ptr).to.equal("ipfs://direct-cid");
+      expect(version).to.equal(1);
+      expect(status).to.equal(1);
     });
   });
 });

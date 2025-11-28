@@ -2,6 +2,13 @@ const hre = require("hardhat");
 const fs = require("fs");
 const path = require("path");
 
+/**
+ * Check revocation status from the smart contract.
+ * 
+ * SCOR-AHIBE: 1 on-chain key = 1 off-chain file.
+ * Direct CID lookup with O(1) complexity.
+ * No aggregation or Merkle proofs.
+ */
 async function main() {
   const [issuer] = await hre.ethers.getSigners();
   console.log(`Checking from account: ${issuer.address}`);
@@ -42,14 +49,12 @@ async function main() {
   console.log(`  Static Key (keccak256 of holderId): ${key}`);
 
   try {
-    // Updated to handle new contract return values (including version and status)
+    // SCOR-AHIBE simplified: getRevocationInfo returns (epoch, ptr, version, status)
     const result = await contract.getRevocationInfo(key);
     const revEpochDays = result[0];
     const cid = result[1];
-    const leafHash = result[2];
-    const aggregated = result[3];
-    const version = result[4] !== undefined ? result[4] : 0n;
-    const status = result[5] !== undefined ? Number(result[5]) : 1; // Default REVOKED for old contracts
+    const version = result[2] !== undefined ? result[2] : 0n;
+    const status = result[3] !== undefined ? Number(result[3]) : 1; // Default REVOKED for old contracts
     
     // Status enum: 0 = ACTIVE, 1 = REVOKED
     const STATUS_ACTIVE = 0;
@@ -72,8 +77,6 @@ async function main() {
       console.log(`  Revocation Epoch (T_rev): ${revEpochDaysNum} days since 1970-01-01`);
       console.log(`  Check Epoch (T_check): ${checkEpochDays} days since 1970-01-01`);
       console.log(`  IPFS CID: ${cid}`);
-      console.log(`  Aggregated index: ${aggregated ? "YES" : "NO"}`);
-      console.log(`  Leaf hash: ${leafHash}`);
       console.log(`  Version: ${versionNum}`);
       console.log(`  Status: ${statusText} (${status})`);
       

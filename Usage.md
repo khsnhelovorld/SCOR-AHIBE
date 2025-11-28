@@ -9,14 +9,12 @@ Complete usage scenarios for SCOR-AHIBE on local and testnet environments.
 1. [Setup & Deploy](#1-setup--deploy)
 2. [Single Revocation](#2-single-revocation)
 3. [Holder & Verifier Flow](#3-holder--verifier-flow)
-4. [Batch Revocation](#4-batch-revocation)
-5. [Un-Revoke Mechanism](#5-un-revoke-mechanism)
-6. [Performance Benchmark](#6-performance-benchmark)
-7. [Compact JSON Format](#7-compact-json-format)
-8. [Encrypted Key Export](#8-encrypted-key-export)
-9. [Multi-Network Deploy](#9-multi-network-deploy)
-10. [IPFS Gateway Fallback](#10-ipfs-gateway-fallback)
-11. [Command Reference](#command-reference)
+4. [Un-Revoke Mechanism](#4-un-revoke-mechanism)
+5. [Performance Benchmark](#5-performance-benchmark)
+6. [Encrypted Key Export](#6-encrypted-key-export)
+7. [Multi-Network Deploy](#7-multi-network-deploy)
+8. [IPFS Gateway Fallback](#8-ipfs-gateway-fallback)
+9. [Command Reference](#command-reference)
 
 ---
 
@@ -95,39 +93,7 @@ $env:DELEGATE_KEY_SECRET="my-secure-passphrase-123"
 
 ---
 
-## 4. Batch Revocation
-
-Revoke multiple holders in a single aggregated index.
-
-### Step 1: Create CSV File
-
-Save as `app/batch_revocations.csv` (UTF-8, no BOM):
-```csv
-holder:user1@example.com,2025-11-01
-holder:user2@example.com,2025-11-02
-holder:user3@example.com,2025-11-03
-holder:user4@example.com,2025-11-04
-holder:user5@example.com,2025-11-05
-```
-
-### Step 2: Generate Aggregated Index
-
-```powershell
-./gradlew runBatchPublisher -PappArgs="batch_revocations.csv"
-# Output: app/outbox/indices/index-<uuid>.json
-```
-
-### Step 3: Publish to Blockchain
-
-```powershell
-$latestIndex = (Get-ChildItem "app/outbox/indices/*.json" | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
-$env:RECORD_PATH=$latestIndex
-npm run hardhat:publish:sepolia
-```
-
----
-
-## 5. Un-Revoke Mechanism
+## 4. Un-Revoke Mechanism
 
 Re-activate a previously revoked holder.
 
@@ -179,7 +145,7 @@ npm run hardhat:publish:sepolia
 
 ---
 
-## 6. Performance Benchmark
+## 5. Performance Benchmark
 
 Run cryptographic operation benchmarks.
 
@@ -203,56 +169,11 @@ CSV exported to: `benchmark_results/benchmark_<holder>_<epoch>_<timestamp>.csv`
 - Delegate key generation time
 - Blockchain query time
 - IPFS fetch time
-- JSON parse time (for aggregated)
 - Decryption time
 
 ---
 
-## 7. Compact JSON Format
-
-Reduce IPFS storage by 30-40% with shortened keys.
-
-### Standard Format
-
-```json
-{
-  "holderId": "holder:alice@example.com",
-  "epoch": "2025-10-30",
-  "ciphertextHex": "abcd...",
-  "leafHashHex": "1234..."
-}
-```
-
-### Compact Format
-
-```json
-{
-  "h": "holder:alice@example.com",
-  "e": "2025-10-30",
-  "c": "abcd...",
-  "l": "1234..."
-}
-```
-
-### Enable Compact Format
-
-```powershell
-$env:OUTPUT_FORMAT="compact"
-./gradlew runBatchPublisher -PappArgs="batch_revocations.csv"
-```
-
-### When to Use
-
-| Scenario | Recommendation |
-|----------|---------------|
-| Batch (1000+ holders) | ✅ Use compact |
-| IPFS with size limits | ✅ Use compact |
-| Single revocation | Standard is fine |
-| Debugging | Standard for readability |
-
----
-
-## 8. Encrypted Key Export
+## 6. Encrypted Key Export
 
 Secure delegate key transfer between machines.
 
@@ -289,7 +210,7 @@ $env:DELEGATE_KEY_SECRET="my-secure-passphrase-123"
 
 ---
 
-## 9. Multi-Network Deploy
+## 7. Multi-Network Deploy
 
 ### Local Hardhat Node
 
@@ -317,7 +238,7 @@ PRIVATE_KEY=your_private_key
 
 ---
 
-## 10. IPFS Gateway Fallback
+## 8. IPFS Gateway Fallback
 
 Verify without running local IPFS node.
 
@@ -357,7 +278,6 @@ $env:DELEGATE_KEY_SECRET="my-secure-passphrase-123"
 | Benchmark | `./gradlew runDemo -PappArgs="<holder>,<epoch>,<iterations>"` |
 | Holder key gen | `./gradlew runHolder -PappArgs="<holder>,<epoch>"` |
 | Verifier check | `./gradlew runVerifier -PappArgs="<keyPath>,<holder>,<epoch>"` |
-| Batch publish | `./gradlew runBatchPublisher -PappArgs="<csvFile>"` |
 | Publish to chain | `npm run hardhat:publish:sepolia` |
 | Check on chain | `npm run hardhat:check:sepolia` |
 

@@ -9,6 +9,12 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 
+/**
+ * Writer for revocation records to JSON files.
+ * 
+ * SCOR-AHIBE: 1 on-chain key = 1 off-chain file.
+ * Each holder has exactly one ciphertext file on IPFS.
+ */
 public class RevocationRecordWriter {
 
     private final Path outputDirectory;
@@ -58,7 +64,6 @@ public class RevocationRecordWriter {
         String sessionKeyB64 = ByteEncoding.toBase64(record.sessionKey());
         String ciphertextHex = ByteEncoding.toHex(record.ciphertext());
         String pointer = record.storagePointer() == null ? "" : record.storagePointer();
-        String leafHash = record.leafHash() == null ? "" : ByteEncoding.toHex(record.leafHash());
         String profileField = profileId != null ? 
             String.format("\n                  \"profileId\": \"%s\",", profileId) : "";
         return String.format("""
@@ -68,8 +73,6 @@ public class RevocationRecordWriter {
                   "sessionKey": "%s",
                   "ciphertext": "%s",
                   "storagePointer": "%s",
-                  "aggregated": %s,
-                  "leafHash": "%s",
                   "exportedAt": "%s"
                 }
                 """,
@@ -79,10 +82,7 @@ public class RevocationRecordWriter {
                 sessionKeyB64,
                 ciphertextHex,
                 pointer,
-                record.aggregated(),
-                leafHash,
                 Instant.now().toString()
         );
     }
 }
-

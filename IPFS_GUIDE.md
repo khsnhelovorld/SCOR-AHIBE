@@ -295,10 +295,10 @@ For high availability, pin content on multiple nodes:
 
 ```bash
 # On primary node
-ipfs pin add QmYourAggregatedIndex
+ipfs pin add QmYourCiphertextCID
 
 # On replica nodes
-ipfs pin add QmYourAggregatedIndex
+ipfs pin add QmYourCiphertextCID
 
 # Or use IPFS Cluster for automated replication
 # https://cluster.ipfs.io/
@@ -317,7 +317,8 @@ ipfs pin add QmYourAggregatedIndex
 
 #### Content Security
 
-- Aggregated indices contain encrypted ciphertext only (no plaintext secrets)
+- Ciphertext files contain encrypted data only (no plaintext secrets)
+- Each holder has exactly one ciphertext file (SCOR-AHIBE principle)
 - Treat CIDs as sensitive metadata (reveals revocation patterns)
 - Consider using private IPFS networks for highly sensitive deployments
 
@@ -568,15 +569,13 @@ ipfs bootstrap add /ip4/104.236.179.241/tcp/4001/p2p/QmPeer...
 
 ---
 
-### Index Caching
+### Ciphertext Caching
 
-The `VerifierService` implements intelligent caching for aggregated indices:
+The `VerifierService` uses direct IPFS fetching with circuit breaker protection:
 
-- **LRU Cache**: Maximum 100 entries
-- **TTL**: 5-minute expiration
-- **Auto-eviction**: Oldest entries removed when cache is full
-
-This significantly improves performance when verifying multiple holders from the same batch, reducing redundant IPFS downloads.
+- **Circuit Breaker**: Prevents cascading failures when IPFS is unavailable
+- **Retry Logic**: Exponential backoff for transient failures
+- **Gateway Fallback**: Falls back to public gateways when local node is down
 
 ---
 
@@ -597,7 +596,7 @@ if (!ipfs.isCircuitClosed()) {
 }
 ```
 
-For batch operations, see `BatchPublisherApp` which handles:
-- Chunked uploads for large indices
-- Automatic retry with exponential backoff
-- Deterministic CID calculation for offline mode
+SCOR-AHIBE Principle:
+- Each holder has exactly one ciphertext file on IPFS
+- Direct CID lookup with O(1) complexity
+- No aggregation or shared data files

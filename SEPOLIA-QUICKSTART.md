@@ -69,22 +69,7 @@ $env:DELEGATE_KEY_SECRET="your-secure-passphrase"
 ./gradlew runVerifier -PappArgs="outbox/delegate_key_holder_alice_example.com_2025-10-30.key,holder:alice@example.com,2025-10-30"
 ```
 
-### 4. Batch Revocation
-
-```powershell
-# Create CSV (save as app/batch.csv)
-# holder:user1@example.com,2025-11-01
-# holder:user2@example.com,2025-11-02
-
-./gradlew runBatchPublisher -PappArgs="batch.csv"
-
-# Publish aggregated index
-$latestIndex = (Get-ChildItem "app/outbox/indices/*.json" | Sort-Object LastWriteTime -Descending)[0].FullName
-$env:RECORD_PATH=$latestIndex
-npm run hardhat:publish:sepolia
-```
-
-### 5. Un-Revoke
+### 4. Un-Revoke
 
 ```powershell
 npx hardhat console --network sepolia
@@ -100,11 +85,14 @@ npm run hardhat:check:sepolia
 # Output: Status: ACTIVE (0) - un-revoked!
 ```
 
-### 6. Benchmark
+### 5. Benchmark
 
 ```powershell
 ./gradlew runDemo -PappArgs="holder:alice@example.com,2025-10-30,100"
 # Results: benchmark_results/benchmark_*.csv
+
+./gradlew runDemo -PappArgs="holder:alice@example.com,2025-10-30"
+# 1000 times
 ```
 
 ---
@@ -149,18 +137,17 @@ npm run hardhat:check:sepolia
 ### Key Functions
 
 ```solidity
-// Publish revocation
-function publish(bytes32 key, uint256 epoch, string ptr, bytes32 leafHash, bool aggregated)
+// Publish revocation (1 holder = 1 IPFS file)
+function publish(bytes32 key, uint256 epoch, string ptr)
 
 // Un-revoke holder
 function unrevoke(bytes32 key)
 
 // Check status
-function getRevocationInfo(bytes32 key) returns (epoch, ptr, leafHash, aggregated, version, status)
+function getRevocationInfo(bytes32 key) returns (epoch, ptr, version, status)
 
-// Batch operations
-function publishBatch(...) 
-function publishBatchAggregated(...)
+// Batch operations (transaction-level batching, each holder still has 1 file)
+function publishBatch(bytes32[] keys, uint256[] epochs, string[] ptrs)
 function batchCheckRevocation(bytes32[] keys)
 ```
 

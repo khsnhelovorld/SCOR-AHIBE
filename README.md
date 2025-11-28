@@ -20,8 +20,7 @@ SCOR-AHIBE is a reference implementation for efficient, verifiable credential re
 
 - **AHIBE (Attribute-based Hierarchical IBE)** for time-bound credential encryption
 - **Blockchain** for immutable revocation anchoring with O(1) storage
-- **IPFS** for scalable off-chain ciphertext storage
-- **Merkle Trees** for batch revocation aggregation
+- **IPFS** for scalable off-chain ciphertext storage (1 holder = 1 file)
 
 ### Problem Statement
 
@@ -36,9 +35,10 @@ SCOR-AHIBE achieves:
 | Metric | Traditional | SCOR-AHIBE |
 |--------|------------|------------|
 | On-chain storage | O(n) | **O(1)** per holder |
-| Verification | Online query | **Off-chain** (time comparison) |
-| Batch revocation | N transactions | **1 transaction** |
+| Verification | Online query | **Off-chain** (time comparison + decrypt) |
+| Batch publish | N transactions | **1 transaction** (batch contract call) |
 | Privacy | Leaks query patterns | **Encrypted** ciphertext |
+| IPFS storage | Shared files | **1 file per holder** |
 
 ### Target Users
 
@@ -97,16 +97,14 @@ This implementation accompanies the research paper:
 ### Core Features
 - [x] **BLS12-381 Pairing** - ~128-bit security with native library support
 - [x] **AHIBE Encryption** - Hierarchical key derivation (Holder → Epoch)
-- [x] **Off-chain Storage** - IPFS with automatic pinning
+- [x] **Off-chain Storage** - IPFS with 1 file per holder (direct CID lookup)
 - [x] **O(1) On-chain** - Static key per holder (not per epoch)
-- [x] **Batch Revocation** - Merkle tree aggregation for multiple holders
+- [x] **Batch Contract Calls** - Publish multiple holders in one transaction
 - [x] **Un-Revoke Support** - Version tracking with ACTIVE/REVOKED status
 
 ### Production Features
 - [x] **AES-256-GCM** encrypted key export
 - [x] **Circuit Breaker** for IPFS resilience
-- [x] **LRU Cache** for aggregated indices (5 min TTL)
-- [x] **Compact JSON** format (30-40% smaller)
 - [x] **CSV Benchmark** export for analysis
 
 ### Verification Logic
@@ -197,7 +195,6 @@ See **[Usage.md](Usage.md)** for comprehensive scenarios including:
 | Benchmark | `./gradlew runDemo -PappArgs="<holder>,<epoch>,<iterations>"` |
 | Holder Key Gen | `./gradlew runHolder -PappArgs="<holder>,<epoch>"` |
 | Verify | `./gradlew runVerifier -PappArgs="<keyPath>,<holder>,<epoch>"` |
-| Batch Publish | `./gradlew runBatchPublisher -PappArgs="<csvFile>"` |
 | Deploy Sepolia | `npm run hardhat:deploy:sepolia` |
 | Publish to Chain | `npm run hardhat:publish:sepolia` |
 | Check Status | `npm run hardhat:check:sepolia` |
@@ -216,7 +213,6 @@ See **[Usage.md](Usage.md)** for comprehensive scenarios including:
 | `ETH_RPC_URL` | `http://127.0.0.1:8545` | Ethereum RPC endpoint |
 | `NETWORK` | `hardhat` | Network name |
 | `DELEGATE_KEY_SECRET` | - | Passphrase for key encryption |
-| `OUTPUT_FORMAT` | `standard` | `compact` for smaller JSON |
 | `CHECK_HOLDER_ID` | `holder:alice@example.com` | Holder to check |
 | `CHECK_EPOCH` | `2025-10-30` | Epoch to check |
 
@@ -246,11 +242,11 @@ SCOR-AHIBE/
 │   │   ├── IssuerService.java   # Revocation publishing
 │   │   ├── HolderService.java   # Key derivation
 │   │   ├── VerifierService.java # Status verification
-│   │   └── BatchRevocationService.java
+│   │   └── PkgService.java      # PKG bootstrap
 │   ├── crypto/                  # Cryptographic operations
 │   │   ├── AhibeService.java    # High-level AHIBE API
 │   │   ├── bls12/               # BLS12-381 implementation
-│   │   └── HashingUtils.java    # Merkle tree operations
+│   │   └── HashingUtils.java    # Hashing utilities
 │   ├── eth/                     # Blockchain integration
 │   │   ├── RevocationListClient.java
 │   │   └── Web3jConnectionPool.java
@@ -258,12 +254,12 @@ SCOR-AHIBE/
 │   │   ├── IPFSService.java
 │   │   └── CircuitBreaker.java
 │   ├── io/                      # Serialization
-│   │   └── AggregatedRevocationIndex.java
+│   │   ├── RevocationRecordWriter.java
+│   │   └── KeySerializer.java
 │   ├── App.java                 # Main demo application
 │   ├── DemoApp.java             # Benchmark runner
 │   ├── HolderApp.java           # Standalone holder
-│   ├── VerifierApp.java         # Standalone verifier
-│   └── BatchPublisherApp.java   # Batch operations
+│   └── VerifierApp.java         # Standalone verifier
 ├── contracts/
 │   └── RevocationList.sol       # Smart contract
 ├── scripts/

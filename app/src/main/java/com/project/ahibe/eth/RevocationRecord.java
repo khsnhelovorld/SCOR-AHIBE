@@ -3,18 +3,17 @@ package com.project.ahibe.eth;
 /**
  * Represents a revocation record retrieved from the blockchain.
  * 
+ * SCOR-AHIBE Principle: 1 on-chain key = 1 off-chain file.
+ * Each holder has exactly one ciphertext file on IPFS with direct CID pointer.
+ * 
  * @param epoch The epoch when revocation takes effect (T_rev)
  * @param ptr The IPFS CID or storage pointer
- * @param leafHash The integrity hash of the ciphertext
- * @param aggregated Whether this points to an aggregated index
  * @param version The record version (for supersede tracking)
  * @param status The current status (ACTIVE=0 or REVOKED=1)
  */
 public record RevocationRecord(
     long epoch, 
     String ptr, 
-    String leafHash, 
-    boolean aggregated,
     long version,
     int status
 ) {
@@ -27,8 +26,8 @@ public record RevocationRecord(
     /**
      * Backward-compatible constructor without version and status.
      */
-    public RevocationRecord(long epoch, String ptr, String leafHash, boolean aggregated) {
-        this(epoch, ptr, leafHash, aggregated, 1, STATUS_REVOKED);
+    public RevocationRecord(long epoch, String ptr) {
+        this(epoch, ptr, 1, STATUS_REVOKED);
     }
     
     /**

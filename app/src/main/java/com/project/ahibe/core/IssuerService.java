@@ -1,7 +1,6 @@
 package com.project.ahibe.core;
 
 import com.project.ahibe.crypto.AhibeService;
-import com.project.ahibe.crypto.HashingUtils;
 import com.project.ahibe.crypto.bls12.BLS12SecretKey;
 import com.project.ahibe.ipfs.IPFSService;
 import com.project.ahibe.io.StoragePointer;
@@ -13,6 +12,9 @@ import java.util.Optional;
 
 /**
  * Issuer interacts with PKG outputs to mint credentials and publish revocations.
+ * 
+ * SCOR-AHIBE Principle: 1 on-chain key = 1 off-chain file.
+ * Each holder has exactly one ciphertext file on IPFS with direct CID pointer.
  */
 public class IssuerService {
     private final AhibeService ahibeService;
@@ -54,16 +56,13 @@ public class IssuerService {
         Objects.requireNonNull(epoch, "epoch must not be null");
 
         var encapsulation = ahibeService.encapsulate(setup.publicKey(), List.of(holderId, epoch));
-        byte[] leafHash = HashingUtils.hashHolderEpochCiphertext(holderId, epoch, encapsulation.ciphertext());
 
         return new RevocationRecord(
                 holderId,
                 epoch,
                 encapsulation.sessionKey(),
                 encapsulation.ciphertext(),
-                StoragePointer.deriveCid(encapsulation.ciphertext()),
-                false,
-                leafHash
+                StoragePointer.deriveCid(encapsulation.ciphertext())
         );
     }
 
@@ -71,4 +70,3 @@ public class IssuerService {
         return setup;
     }
 }
-

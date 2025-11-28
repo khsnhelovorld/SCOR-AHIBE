@@ -2,6 +2,13 @@ const hre = require("hardhat");
 const fs = require("fs");
 const path = require("path");
 
+/**
+ * Publish revocation record to the smart contract.
+ * 
+ * SCOR-AHIBE: 1 on-chain key = 1 off-chain file.
+ * Each holder has exactly one IPFS file (direct CID pointer).
+ * No aggregation or Merkle proofs.
+ */
 async function main() {
   const [issuer] = await hre.ethers.getSigners();
   console.log(`Deploying from account: ${issuer.address}`);
@@ -27,11 +34,8 @@ async function main() {
 
   const contract = await hre.ethers.getContractAt("RevocationList", deployment.address, issuer);
 
-  if (Array.isArray(payload.entries)) {
-    await publishAggregated(contract, deployment.address, payload, issuer.address);
-  } else {
-    await publishSingle(contract, deployment.address, payload, issuer.address);
-  }
+  // SCOR-AHIBE: Only single record publishing (no aggregation)
+  await publishSingle(contract, deployment.address, payload, issuer.address);
 }
 
 async function publishSingle(contract, contractAddress, record, issuerAddress) {
@@ -41,53 +45,21 @@ async function publishSingle(contract, contractAddress, record, issuerAddress) {
 
   const key = hre.ethers.keccak256(hre.ethers.toUtf8Bytes(record.holderId));
   const epochDays = formatEpochDays(record.epoch);
-  const leafHash = normalizeLeafHash(record.leafHash);
 
   console.log(`Publishing revocation for ${record.holderId} @ ${record.epoch}`);
-  console.log(`Contract: ${contractAddress} | Pointer: ${record.storagePointer}`);
-  console.log(`Leaf hash: ${leafHash}`);
+  console.log(`Contract: ${contractAddress}`);
+  console.log(`IPFS CID: ${record.storagePointer}`);
 
-  const tx = await contract.publish(key, epochDays, record.storagePointer, leafHash, !!record.aggregated);
+  // SCOR-AHIBE simplified contract: publish(key, epochDays, storagePointer)
+  const tx = await contract.publish(key, epochDays, record.storagePointer);
   console.log(` → tx: ${tx.hash}`);
   await tx.wait();
   console.log("   ✓ Confirmed");
 }
 
-async function publishAggregated(contract, contractAddress, indexJson, issuerAddress) {
-  const pointer = indexJson.storagePointer || process.env.AGGREGATED_POINTER;
-  if (!pointer) {
-    throw new Error("Aggregated index missing storagePointer. Set AGGREGATED_POINTER env var or update index file with pointer.");
-  }
-  console.log(`Detected aggregated index ${indexJson.indexId} (${indexJson.entries.length} entries)`);
-
-  let counter = 0;
-  for (const entry of indexJson.entries) {
-    const key = hre.ethers.keccak256(hre.ethers.toUtf8Bytes(entry.holderId));
-    const epochDays = formatEpochDays(entry.epoch);
-    const leafHash = normalizeLeafHash(entry.leafHashHex || entry.leafHash);
-
-    console.log(`→ Entry: ${entry.holderId} @ ${entry.epoch}`);
-    const tx = await contract.publish(key, epochDays, pointer, leafHash, true);
-    console.log(`   tx: ${tx.hash}`);
-    await tx.wait();
-    counter += 1;
-  }
-  console.log(`✓ Published ${counter} aggregated entries on ${contractAddress}`);
-}
-
 function formatEpochDays(epochStr) {
   const epochDate = new Date(epochStr + "T00:00:00Z");
   return Math.floor(epochDate.getTime() / (1000 * 60 * 60 * 24));
-}
-
-function normalizeLeafHash(value) {
-  if (!value) {
-    return hre.ethers.ZeroHash;
-  }
-  if (!value.startsWith("0x")) {
-    throw new Error("Leaf hash must be hex-prefixed (0x...)");
-  }
-  return hre.ethers.zeroPadValue(value, 32);
 }
 
 function ensure(condition, message) {
@@ -102,4 +74,3 @@ main()
     console.error(err);
     process.exit(1);
   });
-

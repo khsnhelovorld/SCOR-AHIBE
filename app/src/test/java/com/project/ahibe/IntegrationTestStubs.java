@@ -4,12 +4,9 @@ import com.project.ahibe.core.*;
 import com.project.ahibe.crypto.*;
 import com.project.ahibe.crypto.bls12.*;
 import com.project.ahibe.crypto.config.PairingProfile;
-import com.project.ahibe.io.*;
 import org.junit.jupiter.api.*;
-import org.junit.jupiter.api.Disabled;
 
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.util.*;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -17,10 +14,13 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * Integration tests for SCOR-AHIBE components.
  * 
+ * SCOR-AHIBE: 1 on-chain key = 1 off-chain file.
+ * Direct CID lookup with O(1) complexity.
+ * No aggregation or Merkle proofs.
+ * 
  * These tests verify:
  * - BLS12-381 cryptographic operations
  * - AHIBE key generation and delegation
- * - Merkle proof construction and verification
  * - Full end-to-end revocation flow
  * 
  * Note: Tests that require external services (IPFS, Ethereum) are marked
@@ -212,15 +212,36 @@ public class IntegrationTestStubs {
         }
     }
 
-    // ==================== Merkle Proof Tests ====================
+    // ==================== Hashing Utility Tests ====================
 
     @Nested
-    @DisplayName("Merkle Tree and Proof Verification")
-    class MerkleProofTests {
+    @DisplayName("Hashing Utilities")
+    class HashingTests {
 
         @Test
-        @DisplayName("Leaf hash computation is deterministic")
-        void testLeafHashDeterministic() {
+        @DisplayName("SHA-256 hash computation is deterministic")
+        void testSha256Deterministic() {
+            byte[] input = "test_input".getBytes(StandardCharsets.UTF_8);
+            
+            byte[] hash1 = HashingUtils.sha256(input);
+            byte[] hash2 = HashingUtils.sha256(input);
+            
+            assertArrayEquals(hash1, hash2);
+            assertEquals(32, hash1.length, "SHA-256 hash should be 32 bytes");
+        }
+
+        @Test
+        @DisplayName("Different inputs produce different hashes")
+        void testSha256DifferentInputs() {
+            byte[] hash1 = HashingUtils.sha256("input_a".getBytes());
+            byte[] hash2 = HashingUtils.sha256("input_b".getBytes());
+            
+            assertFalse(Arrays.equals(hash1, hash2), "Different inputs should produce different hashes");
+        }
+
+        @Test
+        @DisplayName("Holder/epoch/ciphertext hash is deterministic")
+        void testHashHolderEpochCiphertext() {
             String holderId = "holder:test@example.com";
             String epoch = "2025-01-01";
             byte[] ciphertext = "test_ciphertext".getBytes(StandardCharsets.UTF_8);
@@ -233,164 +254,14 @@ public class IntegrationTestStubs {
         }
 
         @Test
-        @DisplayName("Different inputs produce different leaf hashes")
-        void testLeafHashDifferentInputs() {
-            byte[] ciphertext = "test".getBytes(StandardCharsets.UTF_8);
+        @DisplayName("Hex conversion round-trip")
+        void testHexConversion() {
+            byte[] original = "test".getBytes(StandardCharsets.UTF_8);
+            String hex = HashingUtils.toHex(original);
+            byte[] recovered = HashingUtils.fromHex(hex);
             
-            byte[] hash1 = HashingUtils.hashHolderEpochCiphertext("holder:a", "2025-01-01", ciphertext);
-            byte[] hash2 = HashingUtils.hashHolderEpochCiphertext("holder:b", "2025-01-01", ciphertext);
-            byte[] hash3 = HashingUtils.hashHolderEpochCiphertext("holder:a", "2025-01-02", ciphertext);
-            
-            assertFalse(Arrays.equals(hash1, hash2), "Different holders should produce different hashes");
-            assertFalse(Arrays.equals(hash1, hash3), "Different epochs should produce different hashes");
-        }
-
-        @Test
-        @DisplayName("Merkle proof verification succeeds for valid proof")
-        void testMerkleProofVerification() {
-            // Create test leaves
-            byte[] leaf1 = HashingUtils.sha256("leaf1".getBytes());
-            byte[] leaf2 = HashingUtils.sha256("leaf2".getBytes());
-            byte[] leaf3 = HashingUtils.sha256("leaf3".getBytes());
-            byte[] leaf4 = HashingUtils.sha256("leaf4".getBytes());
-            
-            // Build Merkle tree
-            // Level 0: [leaf1, leaf2, leaf3, leaf4]
-            // Level 1: [hash(leaf1,leaf2), hash(leaf3,leaf4)]
-            // Level 2: [root = hash(level1[0], level1[1])]
-            byte[] node01 = HashingUtils.sha256(leaf1, leaf2);
-            byte[] node23 = HashingUtils.sha256(leaf3, leaf4);
-            byte[] root = HashingUtils.sha256(node01, node23);
-            
-            // Create proof for leaf1: [leaf2 (RIGHT), node23 (RIGHT)]
-            List<HashingUtils.MerkleProofNode> proof = List.of(
-                new HashingUtils.MerkleProofNode(HashingUtils.MerklePosition.RIGHT, leaf2),
-                new HashingUtils.MerkleProofNode(HashingUtils.MerklePosition.RIGHT, node23)
-            );
-            
-            assertTrue(HashingUtils.verifyMerkleProof(leaf1, proof, root),
-                "Valid Merkle proof should verify");
-        }
-
-        @Test
-        @DisplayName("Merkle proof verification fails for invalid proof")
-        void testMerkleProofVerificationFails() {
-            byte[] leaf1 = HashingUtils.sha256("leaf1".getBytes());
-            byte[] leaf2 = HashingUtils.sha256("leaf2".getBytes());
-            byte[] fakeRoot = HashingUtils.sha256("fake_root".getBytes());
-            
-            List<HashingUtils.MerkleProofNode> proof = List.of(
-                new HashingUtils.MerkleProofNode(HashingUtils.MerklePosition.RIGHT, leaf2)
-            );
-            
-            assertFalse(HashingUtils.verifyMerkleProof(leaf1, proof, fakeRoot),
-                "Invalid Merkle proof should fail");
-        }
-
-        @Test
-        @DisplayName("Verify leaf hash recomputation")
-        void testVerifyLeafHash() {
-            String holderId = "holder:test@example.com";
-            String epoch = "2025-01-01";
-            byte[] ciphertext = "test_ciphertext".getBytes(StandardCharsets.UTF_8);
-            
-            byte[] expectedHash = HashingUtils.hashHolderEpochCiphertext(holderId, epoch, ciphertext);
-            
-            assertTrue(HashingUtils.verifyLeafHash(holderId, epoch, ciphertext, expectedHash));
-            
-            // Wrong data should fail
-            byte[] wrongCiphertext = "wrong".getBytes(StandardCharsets.UTF_8);
-            assertFalse(HashingUtils.verifyLeafHash(holderId, epoch, wrongCiphertext, expectedHash));
-        }
-    }
-
-    // ==================== Aggregated Index Tests ====================
-
-    @Nested
-    @DisplayName("Aggregated Revocation Index")
-    class AggregatedIndexTests {
-
-        private AhibeService ahibeService;
-        private AhibeService.SetupResult setup;
-
-        @BeforeEach
-        void setUp() {
-            ahibeService = new AhibeService(PairingProfile.BLS12_381, 3);
-            setup = ahibeService.setup();
-        }
-
-        @Test
-        @DisplayName("Create aggregated index from multiple records")
-        void testCreateAggregatedIndex() {
-            List<RevocationRecord> records = createTestRecords(5);
-            
-            AggregatedRevocationIndex index = AggregatedRevocationIndex.fromRecords(records);
-            
-            assertNotNull(index);
-            assertEquals(5, index.entries().size());
-            assertNotNull(index.merkleRoot());
-            assertNotNull(index.indexId());
-        }
-
-        @Test
-        @DisplayName("Find entry by holder and epoch")
-        void testFindEntry() {
-            List<RevocationRecord> records = createTestRecords(3);
-            AggregatedRevocationIndex index = AggregatedRevocationIndex.fromRecords(records);
-            
-            Optional<AggregatedRevocationIndex.Entry> entry = 
-                index.findEntry("holder:user_1@test.com", "2025-01-01");
-            
-            assertTrue(entry.isPresent());
-            assertEquals("holder:user_1@test.com", entry.get().holderId());
-        }
-
-        @Test
-        @DisplayName("Index serialization and deserialization")
-        @Disabled("JSON serialization of records requires additional Jackson configuration - skipped for demo")
-        void testIndexSerialization() {
-            List<RevocationRecord> records = createTestRecords(3);
-            AggregatedRevocationIndex original = AggregatedRevocationIndex.fromRecords(records);
-            
-            byte[] json = original.toJsonBytes();
-            assertNotNull(json, "JSON bytes should not be null");
-            assertTrue(json.length > 0, "JSON should not be empty");
-            
-            AggregatedRevocationIndex restored = AggregatedRevocationIndex.fromJson(json);
-            assertNotNull(restored, "Restored index should not be null");
-            assertNotNull(restored.entries(), "Restored entries should not be null");
-            
-            assertEquals(original.entries().size(), restored.entries().size(), 
-                "Entry count should match: original=" + original.entries().size() + 
-                ", restored=" + restored.entries().size());
-            assertEquals(original.merkleRoot(), restored.merkleRoot(),
-                "Merkle root should match");
-        }
-
-        @Test
-        @DisplayName("Each entry has valid Merkle proof")
-        void testEntriesHaveProofs() {
-            List<RevocationRecord> records = createTestRecords(4);
-            AggregatedRevocationIndex index = AggregatedRevocationIndex.fromRecords(records);
-            
-            for (AggregatedRevocationIndex.Entry entry : index.entries()) {
-                assertNotNull(entry.proof());
-                assertFalse(entry.proof().isEmpty(), "Entry should have non-empty proof");
-                assertNotNull(entry.leafHashHex());
-            }
-        }
-
-        private List<RevocationRecord> createTestRecords(int count) {
-            List<RevocationRecord> records = new ArrayList<>();
-            IssuerService issuer = new IssuerService(ahibeService, setup);
-            
-            for (int i = 0; i < count; i++) {
-                String holderId = "holder:user_" + i + "@test.com";
-                RevocationRecord record = issuer.buildRevocationRecord(holderId, "2025-01-01");
-                records.add(record);
-            }
-            
-            return records;
+            assertArrayEquals(original, recovered);
+            assertTrue(hex.startsWith("0x"), "Hex string should start with 0x");
         }
     }
 
@@ -505,10 +376,11 @@ public class IntegrationTestStubs {
             BLS12SecretKey epochKey = holder.deriveEpochKey(rootKey, epoch);
             assertNotNull(epochKey);
             
-            // Issuer creates revocation record
+            // Issuer creates revocation record (1:1 holder-to-file mapping)
             RevocationRecord record = issuer.buildRevocationRecord(holderId, epoch);
             assertNotNull(record.ciphertext());
             assertNotNull(record.sessionKey());
+            assertNotNull(record.storagePointer()); // Direct CID pointer
             
             // Verifier decrypts with correct key
             VerifierService verifier = new VerifierService(ahibeService);
@@ -549,6 +421,26 @@ public class IntegrationTestStubs {
             assertFalse(Arrays.equals(record.sessionKey(), recoveredWrong),
                 "Wrong epoch key should not recover correct session key");
         }
+
+        @Test
+        @DisplayName("SCOR-AHIBE principle: each holder has unique storage pointer")
+        void testOneKeyOneFileMapping() {
+            AhibeService ahibeService = new AhibeService(PairingProfile.BLS12_381, 3);
+            AhibeService.SetupResult setup = ahibeService.setup();
+            IssuerService issuer = new IssuerService(ahibeService, setup);
+            
+            // Create revocations for different holders
+            RevocationRecord record1 = issuer.buildRevocationRecord("holder:user1@example.com", "2025-01-01");
+            RevocationRecord record2 = issuer.buildRevocationRecord("holder:user2@example.com", "2025-01-01");
+            RevocationRecord record3 = issuer.buildRevocationRecord("holder:user1@example.com", "2025-01-02");
+            
+            // Each record should have a unique storage pointer (CID)
+            assertNotEquals(record1.storagePointer(), record2.storagePointer(),
+                "Different holders should have different CIDs");
+            assertNotEquals(record1.storagePointer(), record3.storagePointer(),
+                "Different epochs should have different CIDs");
+            assertNotEquals(record2.storagePointer(), record3.storagePointer(),
+                "Different holder/epoch combinations should have different CIDs");
+        }
     }
 }
-

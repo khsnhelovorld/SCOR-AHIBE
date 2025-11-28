@@ -122,7 +122,7 @@ public class App {
                         System.out.println("Verification result: " + result.message());
                         
                         if (!result.isValid() && result.pointer() != null && !result.pointer().isEmpty()) {
-                            System.out.printf("On-chain pointer: %s (aggregated: %s)%n", result.pointer(), result.aggregated());
+                            System.out.printf("On-chain pointer: %s%n", result.pointer());
                             System.out.printf(
                                     "On-chain pointer matches local CID: %s%n",
                                     record.storagePointer().equals(result.pointer()) ? "YES" : "NO"
