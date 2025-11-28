@@ -14,11 +14,17 @@ public record RevocationRecord(
         String epoch,
         byte[] sessionKey,
         byte[] ciphertext,
-        String storagePointer
+        String storagePointer,
+        boolean aggregated,
+        byte[] leafHash
 ) {
 
     public RevocationRecord withStoragePointer(String pointer) {
-        return new RevocationRecord(holderId, epoch, sessionKey, ciphertext, pointer);
+        return new RevocationRecord(holderId, epoch, sessionKey, ciphertext, pointer, aggregated, leafHash);
+    }
+
+    public RevocationRecord markAggregated(String pointer) {
+        return new RevocationRecord(holderId, epoch, sessionKey, ciphertext, pointer, true, leafHash);
     }
 }
 

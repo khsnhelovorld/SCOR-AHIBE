@@ -1,9 +1,10 @@
 package com.project.ahibe.core;
 
 import com.project.ahibe.crypto.AhibeService;
+import com.project.ahibe.crypto.HashingUtils;
+import com.project.ahibe.crypto.bls12.BLS12SecretKey;
 import com.project.ahibe.ipfs.IPFSService;
 import com.project.ahibe.io.StoragePointer;
-import it.unisa.dia.gas.crypto.jpbc.fe.ibe.dip10.params.AHIBEDIP10SecretKeyParameters;
 
 import java.io.IOException;
 import java.util.List;
@@ -30,32 +31,40 @@ public class IssuerService {
         this.ipfsService = Optional.of(ipfsService);
     }
 
-    public AHIBEDIP10SecretKeyParameters issueRootKey(String holderId) {
+    public BLS12SecretKey issueRootKey(String holderId) {
         Objects.requireNonNull(holderId, "holderId must not be null");
         return ahibeService.keyGen(setup, List.of(holderId));
     }
 
     public RevocationRecord publishRevocation(String holderId, String epoch) {
+        RevocationRecord raw = buildRevocationRecord(holderId, epoch);
+        String pointer = ipfsService.map(service -> {
+            try {
+                return service.uploadRevocationCertificate(raw.ciphertext());
+            } catch (IOException e) {
+                throw new IllegalStateException("Failed to upload revocation certificate to IPFS", e);
+            }
+        }).orElse(StoragePointer.deriveCid(raw.ciphertext()));
+
+        return raw.withStoragePointer(pointer);
+    }
+
+    public RevocationRecord buildRevocationRecord(String holderId, String epoch) {
         Objects.requireNonNull(holderId, "holderId must not be null");
         Objects.requireNonNull(epoch, "epoch must not be null");
 
         var encapsulation = ahibeService.encapsulate(setup.publicKey(), List.of(holderId, epoch));
-        String storagePointer;
+        byte[] leafHash = HashingUtils.hashHolderEpochCiphertext(holderId, epoch, encapsulation.ciphertext());
 
-        // If IPFS service is available, upload revocation certificate and get real CID
-        if (ipfsService.isPresent()) {
-            try {
-                String cid = ipfsService.get().uploadRevocationCertificate(encapsulation.ciphertext());
-                storagePointer = cid;
-            } catch (IOException e) {
-                throw new IllegalStateException("Failed to upload revocation certificate to IPFS", e);
-            }
-        } else {
-            // Fallback to simulated CID if IPFS is not configured
-            storagePointer = StoragePointer.deriveCid(encapsulation.ciphertext());
-        }
-
-        return new RevocationRecord(holderId, epoch, encapsulation.sessionKey(), encapsulation.ciphertext(), storagePointer);
+        return new RevocationRecord(
+                holderId,
+                epoch,
+                encapsulation.sessionKey(),
+                encapsulation.ciphertext(),
+                StoragePointer.deriveCid(encapsulation.ciphertext()),
+                false,
+                leafHash
+        );
     }
 
     public AhibeService.SetupResult setup() {

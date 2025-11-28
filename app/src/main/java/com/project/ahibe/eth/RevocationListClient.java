@@ -3,11 +3,13 @@ package com.project.ahibe.eth;
 import org.web3j.abi.FunctionEncoder;
 import org.web3j.abi.FunctionReturnDecoder;
 import org.web3j.abi.TypeReference;
+import org.web3j.abi.datatypes.Bool;
 import org.web3j.abi.datatypes.Function;
 import org.web3j.abi.datatypes.Type;
 import org.web3j.abi.datatypes.Utf8String;
 import org.web3j.abi.datatypes.generated.Bytes32;
 import org.web3j.abi.datatypes.generated.Uint256;
+import org.web3j.abi.datatypes.generated.Uint8;
 import org.web3j.crypto.Hash;
 import org.web3j.protocol.Web3j;
 import org.web3j.protocol.core.DefaultBlockParameterName;
@@ -38,7 +40,7 @@ public class RevocationListClient implements Closeable {
      * Fetch revocation record from blockchain using static key (ID only).
      * 
      * @param holderId The holder ID
-     * @return Optional RevocationRecord containing epoch and pointer, empty if not found
+     * @return Optional RevocationRecord containing epoch, pointer, version and status
      */
     public Optional<RevocationRecord> fetchRecord(String holderId) {
         byte[] keyBytes = computeStaticKey(holderId);
@@ -46,29 +48,88 @@ public class RevocationListClient implements Closeable {
                 "getRevocationInfo",
                 List.of(new Bytes32(keyBytes)),
                 Arrays.asList(
-                    new TypeReference<Uint256>() {},
-                    new TypeReference<Utf8String>() {}
+                    new TypeReference<Uint256>() {},  // epoch
+                    new TypeReference<Utf8String>() {}, // ptr
+                    new TypeReference<Bytes32>() {},  // leafHash
+                    new TypeReference<Bool>() {},     // aggregated
+                    new TypeReference<Uint256>() {},  // version
+                    new TypeReference<Uint8>() {}     // status (enum)
                 )
         );
 
         return executeContractCall(function).map(decoded -> {
-            if (decoded.size() < 2) {
+            if (decoded.size() < 6) {
                 return null;
             }
             
             Uint256 epochValue = (Uint256) decoded.get(0);
             Utf8String ptrValue = (Utf8String) decoded.get(1);
+            Bytes32 leafValue = (Bytes32) decoded.get(2);
+            Bool aggregatedValue = (Bool) decoded.get(3);
+            Uint256 versionValue = (Uint256) decoded.get(4);
+            
+            // Status is an enum, decode as uint8
+            BigInteger statusBigInt;
+            Object statusObj = decoded.get(5);
+            if (statusObj instanceof Uint8) {
+                statusBigInt = ((Uint8) statusObj).getValue();
+            } else if (statusObj instanceof Uint256) {
+                statusBigInt = ((Uint256) statusObj).getValue();
+            } else {
+                statusBigInt = BigInteger.ZERO;
+            }
             
             BigInteger epoch = epochValue.getValue();
-            String ptr = (String) ptrValue.getValue();
+            String ptr = ptrValue.getValue();
             
-            // If epoch is 0, record is empty
-            if (epoch.equals(BigInteger.ZERO) && (ptr == null || ptr.isEmpty())) {
+            // If epoch is 0 and version is 0, record is empty
+            if (epoch.equals(BigInteger.ZERO) && versionValue.getValue().equals(BigInteger.ZERO)) {
                 return null;
             }
             
-            return new RevocationRecord(epoch.longValue(), ptr);
+            String leafHashHex = toHex(leafValue.getValue());
+            return new RevocationRecord(
+                epoch.longValue(), 
+                ptr, 
+                leafHashHex, 
+                aggregatedValue.getValue(),
+                versionValue.getValue().longValue(),
+                statusBigInt.intValue()
+            );
         });
+    }
+
+    /**
+     * Check if a holder is currently revoked.
+     * 
+     * @param holderId The holder ID
+     * @return true if holder is revoked, false otherwise
+     */
+    public boolean isRevoked(String holderId) {
+        byte[] keyBytes = computeStaticKey(holderId);
+        Function function = new Function(
+                "isRevoked",
+                List.of(new Bytes32(keyBytes)),
+                List.of(new TypeReference<Bool>() {})
+        );
+
+        return executeContractCall(function)
+                .map(decoded -> {
+                    if (decoded.isEmpty()) return false;
+                    return ((Bool) decoded.get(0)).getValue();
+                })
+                .orElse(false);
+    }
+
+    private static String toHex(byte[] value) {
+        if (value == null) {
+            return "0x";
+        }
+        StringBuilder builder = new StringBuilder("0x");
+        for (byte b : value) {
+            builder.append(String.format("%02x", b));
+        }
+        return builder.toString();
     }
 
     /**
@@ -81,14 +142,21 @@ public class RevocationListClient implements Closeable {
         Function function = new Function(
                 "getRevocationInfo",
                 List.of(new Bytes32(keyBytes)),
-                List.of(new TypeReference<Utf8String>() {})
+                Arrays.asList(
+                        new TypeReference<Uint256>() {},
+                        new TypeReference<Utf8String>() {},
+                        new TypeReference<Bytes32>() {},
+                        new TypeReference<Bool>() {},
+                        new TypeReference<Uint256>() {},
+                        new TypeReference<Uint8>() {}
+                )
         );
 
         return executeContractCall(function).flatMap(decoded -> {
             if (decoded.isEmpty()) {
                 return Optional.empty();
             }
-            String pointer = (String) decoded.get(0).getValue();
+            String pointer = (String) decoded.get(1).getValue();
             return pointer.isEmpty() ? Optional.empty() : Optional.of(pointer);
         });
     }
@@ -185,4 +253,3 @@ public class RevocationListClient implements Closeable {
         web3.shutdown();
     }
 }
-

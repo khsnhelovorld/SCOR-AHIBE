@@ -22,32 +22,78 @@ async function main() {
     throw new Error(`Deployment file not found: ${deploymentFile}. Please deploy the contract first.`);
   }
 
-  const record = JSON.parse(fs.readFileSync(recordPath, "utf8"));
+  const payload = JSON.parse(fs.readFileSync(recordPath, "utf8"));
   const deployment = JSON.parse(fs.readFileSync(deploymentFile, "utf8"));
 
   const contract = await hre.ethers.getContractAt("RevocationList", deployment.address, issuer);
 
-  // Use static key: keccak256(holderId) only
-  const key = hre.ethers.keccak256(hre.ethers.toUtf8Bytes(record.holderId));
+  if (Array.isArray(payload.entries)) {
+    await publishAggregated(contract, deployment.address, payload, issuer.address);
+  } else {
+    await publishSingle(contract, deployment.address, payload, issuer.address);
+  }
+}
 
-  // Convert epoch string (YYYY-MM-DD) to days since epoch (1970-01-01)
-  const epochDate = new Date(record.epoch + "T00:00:00Z");
-  const epochDays = Math.floor(epochDate.getTime() / (1000 * 60 * 60 * 24));
+async function publishSingle(contract, contractAddress, record, issuerAddress) {
+  ensure(record.holderId, "holderId missing in record JSON");
+  ensure(record.epoch, "epoch missing in record JSON");
+  ensure(record.storagePointer, "storagePointer missing in record JSON");
+
+  const key = hre.ethers.keccak256(hre.ethers.toUtf8Bytes(record.holderId));
+  const epochDays = formatEpochDays(record.epoch);
+  const leafHash = normalizeLeafHash(record.leafHash);
 
   console.log(`Publishing revocation for ${record.holderId} @ ${record.epoch}`);
-  console.log(`Contract address: ${deployment.address}`);
-  console.log(`Static key (keccak256 of holderId): ${key}`);
-  console.log(`Epoch (days since 1970-01-01): ${epochDays}`);
-  if (!record.storagePointer) {
-    throw new Error("storagePointer missing in record JSON. Upload ciphertext to IPFS and set storagePointer.");
-  }
-  console.log(`IPFS CID: ${record.storagePointer}`);
-  
-  const tx = await contract.publish(key, epochDays, record.storagePointer);
-  console.log(`Transaction submitted: ${tx.hash}`);
-  console.log("Waiting for confirmation...");
+  console.log(`Contract: ${contractAddress} | Pointer: ${record.storagePointer}`);
+  console.log(`Leaf hash: ${leafHash}`);
+
+  const tx = await contract.publish(key, epochDays, record.storagePointer, leafHash, !!record.aggregated);
+  console.log(` → tx: ${tx.hash}`);
   await tx.wait();
-  console.log(`Transaction confirmed! Hash: ${tx.hash}`);
+  console.log("   ✓ Confirmed");
+}
+
+async function publishAggregated(contract, contractAddress, indexJson, issuerAddress) {
+  const pointer = indexJson.storagePointer || process.env.AGGREGATED_POINTER;
+  if (!pointer) {
+    throw new Error("Aggregated index missing storagePointer. Set AGGREGATED_POINTER env var or update index file with pointer.");
+  }
+  console.log(`Detected aggregated index ${indexJson.indexId} (${indexJson.entries.length} entries)`);
+
+  let counter = 0;
+  for (const entry of indexJson.entries) {
+    const key = hre.ethers.keccak256(hre.ethers.toUtf8Bytes(entry.holderId));
+    const epochDays = formatEpochDays(entry.epoch);
+    const leafHash = normalizeLeafHash(entry.leafHashHex || entry.leafHash);
+
+    console.log(`→ Entry: ${entry.holderId} @ ${entry.epoch}`);
+    const tx = await contract.publish(key, epochDays, pointer, leafHash, true);
+    console.log(`   tx: ${tx.hash}`);
+    await tx.wait();
+    counter += 1;
+  }
+  console.log(`✓ Published ${counter} aggregated entries on ${contractAddress}`);
+}
+
+function formatEpochDays(epochStr) {
+  const epochDate = new Date(epochStr + "T00:00:00Z");
+  return Math.floor(epochDate.getTime() / (1000 * 60 * 60 * 24));
+}
+
+function normalizeLeafHash(value) {
+  if (!value) {
+    return hre.ethers.ZeroHash;
+  }
+  if (!value.startsWith("0x")) {
+    throw new Error("Leaf hash must be hex-prefixed (0x...)");
+  }
+  return hre.ethers.zeroPadValue(value, 32);
+}
+
+function ensure(condition, message) {
+  if (!condition) {
+    throw new Error(message);
+  }
 }
 
 main()

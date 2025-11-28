@@ -29,10 +29,17 @@ app/build/
 app/bin/
 app/outbox/
 app/tmp/
+build/
+
+# Benchmark results (regenerated on each run)
+benchmark_results/
 
 # Local storage artifacts
 outbox/
 storage/
+
+# Local tooling (downloaded JDKs, etc.)
+tools/
 
 # Gradle wrappers downloaded at runtime
 gradle-*/
@@ -53,3 +60,15 @@ libs/*
 *.iws
 .DS_Store
 Thumbs.db
+
+# -------------------------------------------------------------
+# Temporary files
+# -------------------------------------------------------------
+*.tmp
+*.temp
+*.bak
+*~
+
+# Test CSV files
+*.csv
+!app/src/test/resources/*.csv

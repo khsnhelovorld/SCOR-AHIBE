@@ -18,12 +18,16 @@ public class RevocationRecordWriter {
     }
 
     public Path write(RevocationRecord record) throws IOException {
+        return write(record, null);
+    }
+    
+    public Path write(RevocationRecord record, String profileId) throws IOException {
         Files.createDirectories(outputDirectory);
 
         String fileName = buildFileName(record);
         Path target = outputDirectory.resolve(fileName);
 
-        String json = toJson(record);
+        String json = toJson(record, profileId);
         Files.writeString(
                 target,
                 json,
@@ -47,24 +51,36 @@ public class RevocationRecordWriter {
     }
 
     private String toJson(RevocationRecord record) {
+        return toJson(record, null);
+    }
+    
+    private String toJson(RevocationRecord record, String profileId) {
         String sessionKeyB64 = ByteEncoding.toBase64(record.sessionKey());
         String ciphertextHex = ByteEncoding.toHex(record.ciphertext());
         String pointer = record.storagePointer() == null ? "" : record.storagePointer();
-        return """
+        String leafHash = record.leafHash() == null ? "" : ByteEncoding.toHex(record.leafHash());
+        String profileField = profileId != null ? 
+            String.format("\n                  \"profileId\": \"%s\",", profileId) : "";
+        return String.format("""
                 {
                   "holderId": "%s",
-                  "epoch": "%s",
+                  "epoch": "%s",%s
                   "sessionKey": "%s",
                   "ciphertext": "%s",
                   "storagePointer": "%s",
+                  "aggregated": %s,
+                  "leafHash": "%s",
                   "exportedAt": "%s"
                 }
-                """.formatted(
+                """,
                 record.holderId(),
                 record.epoch(),
+                profileField,
                 sessionKeyB64,
                 ciphertextHex,
                 pointer,
+                record.aggregated(),
+                leafHash,
                 Instant.now().toString()
         );
     }

@@ -4,8 +4,10 @@ import com.project.ahibe.core.HolderService;
 import com.project.ahibe.core.IssuerService;
 import com.project.ahibe.core.PkgService;
 import com.project.ahibe.crypto.AhibeService;
+import com.project.ahibe.crypto.CryptoMetrics;
+import com.project.ahibe.crypto.config.PairingProfile;
 import com.project.ahibe.io.KeySerializer;
-import it.unisa.dia.gas.crypto.jpbc.fe.ibe.dip10.params.AHIBEDIP10SecretKeyParameters;
+import com.project.ahibe.crypto.bls12.BLS12SecretKey;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -43,8 +45,10 @@ public class HolderApp {
 
             // Initialize AHIBE service (same parameters as PKG/Issuer)
             System.out.println("[1/5] Initializing AHIBE cryptographic service...");
-            AhibeService ahibeService = new AhibeService(160, 3);
-            System.out.println("      ✓ AHIBE service initialized (160-bit security, depth 3)");
+            // Always use BLS12-381 (AHIBE_PROFILE removed)
+            PairingProfile profile = PairingProfile.BLS12_381;
+            AhibeService ahibeService = new AhibeService(profile, 3);
+            System.out.printf("      ✓ AHIBE service initialized (%s, depth 3)%n", profile.metadata().id());
 
             // In production, Holder would receive setup.publicKey from PKG via secure channel
             // For demo, we bootstrap here
@@ -53,13 +57,15 @@ public class HolderApp {
             PkgService pkg = new PkgService(ahibeService);
             var setup = pkg.bootstrap();
             System.out.println("      ✓ PKG bootstrapped, public parameters obtained");
+            System.out.printf("      • Public parameters footprint: %d bytes%n",
+                    CryptoMetrics.estimatePublicKeySize(setup.publicKey()));
 
             // In production, Holder would receive rootKey from Issuer via secure channel
             // For demo, we generate it here
             System.out.println();
             System.out.println("[3/5] Requesting root key from Issuer...");
             IssuerService issuer = new IssuerService(ahibeService, setup);
-            AHIBEDIP10SecretKeyParameters rootKey = issuer.issueRootKey(holderId);
+            BLS12SecretKey rootKey = issuer.issueRootKey(holderId);
             System.out.println("      ✓ Root key (SK_H) received from Issuer");
             System.out.println("      ℹ In production, this key would be transmitted via secure channel");
 
@@ -67,7 +73,7 @@ public class HolderApp {
             System.out.println();
             System.out.println("[4/5] Deriving epoch-specific delegate key...");
             HolderService holder = new HolderService(ahibeService, setup.publicKey());
-            AHIBEDIP10SecretKeyParameters delegateKey = holder.deriveEpochKey(rootKey, epoch);
+            BLS12SecretKey delegateKey = holder.deriveEpochKey(rootKey, epoch);
             System.out.println("      ✓ Delegate key (SK_{H||T}) derived for epoch: " + epoch);
             System.out.println("      ℹ This demonstrates AHIBE hierarchical key derivation");
 
