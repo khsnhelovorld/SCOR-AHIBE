@@ -3,14 +3,16 @@ package com.project.ahibe;
 import com.project.ahibe.core.PkgService;
 import com.project.ahibe.core.VerifierService;
 import com.project.ahibe.crypto.AhibeService;
+import com.project.ahibe.crypto.CryptoMetrics;
+import com.project.ahibe.crypto.config.PairingProfile;
 import com.project.ahibe.eth.DeploymentMetadata;
 import com.project.ahibe.eth.DeploymentRegistry;
 import com.project.ahibe.eth.RevocationListClient;
 import com.project.ahibe.io.KeySerializer;
 import com.project.ahibe.ipfs.IPFSService;
 import com.project.ahibe.ipfs.IPFSStorageFetcher;
-import it.unisa.dia.gas.crypto.jpbc.fe.ibe.dip10.params.AHIBEDIP10PublicKeyParameters;
-import it.unisa.dia.gas.crypto.jpbc.fe.ibe.dip10.params.AHIBEDIP10SecretKeyParameters;
+import com.project.ahibe.crypto.bls12.BLS12PublicKey;
+import com.project.ahibe.crypto.bls12.BLS12SecretKey;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -19,6 +21,10 @@ import java.util.Optional;
 /**
  * Verifier application: receives delegate key from Holder, queries blockchain, 
  * downloads ciphertext from IPFS, and verifies revocation status.
+ * 
+ * SCOR-AHIBE: 1 on-chain key = 1 off-chain file.
+ * Direct CID lookup with O(1) complexity.
+ * No aggregation or Merkle proofs.
  * 
  * This application demonstrates the complete verification flow:
  * 1. Import delegate key from Holder
@@ -54,8 +60,10 @@ public class VerifierApp {
 
             // Initialize AHIBE service
             System.out.println("[1/7] Initializing AHIBE cryptographic service...");
-            AhibeService ahibeService = new AhibeService(160, 3);
-            System.out.println("      ✓ AHIBE service initialized");
+            // Always use BLS12-381 (AHIBE_PROFILE removed)
+            PairingProfile profile = PairingProfile.BLS12_381;
+            AhibeService ahibeService = new AhibeService(profile, 3);
+            System.out.println("      ✓ AHIBE service initialized (" + profile.metadata().id() + ")");
 
             // In production, Verifier would receive publicKey from PKG
             // For demo, we bootstrap here to get public parameters
@@ -63,13 +71,15 @@ public class VerifierApp {
             System.out.println("[2/7] Obtaining public parameters from PKG...");
             PkgService pkg = new PkgService(ahibeService);
             AhibeService.SetupResult setup = pkg.bootstrap();
-            AHIBEDIP10PublicKeyParameters publicKey = setup.publicKey();
+            BLS12PublicKey publicKey = setup.publicKey();
             System.out.println("      ✓ Public parameters obtained");
+            System.out.printf("      • Public parameter footprint: %d bytes%n",
+                    CryptoMetrics.estimatePublicKeySize(publicKey));
 
             // Import delegate key from Holder
             System.out.println();
             System.out.println("[3/7] Importing delegate key from Holder...");
-            AHIBEDIP10SecretKeyParameters delegateKey = KeySerializer.importDelegateKey(delegateKeyPath, publicKey);
+            BLS12SecretKey delegateKey = KeySerializer.importDelegateKey(delegateKeyPath, publicKey);
             System.out.println("      ✓ Delegate key imported successfully");
             System.out.println("      ℹ This key can only decrypt revocations for: " + holderId + " || " + epoch);
 
@@ -139,15 +149,15 @@ public class VerifierApp {
                 String cid = Optional.ofNullable(verification.pointer())
                         .filter(ptr -> !ptr.isBlank())
                         .orElseThrow(() -> new IllegalStateException("Revocation record missing storage pointer"));
-                System.out.println("      ✓ Found revocation CID on blockchain: " + cid);
+                System.out.println("      ✓ Found revocation pointer on blockchain: " + cid);
 
-                // Download ciphertext from IPFS
+                // Download ciphertext from IPFS (direct CID - O(1) lookup)
                 System.out.println();
                 System.out.println("[7/7] Downloading and decrypting revocation certificate...");
                 IPFSStorageFetcher fetcher = new IPFSStorageFetcher(ipfsService);
-                Optional<byte[]> ciphertextOpt = fetcher.fetch(cid);
+                Optional<byte[]> payloadOpt = fetcher.fetch(cid);
 
-                if (ciphertextOpt.isEmpty()) {
+                if (payloadOpt.isEmpty()) {
                     System.err.println("      ✗ Failed to download ciphertext from IPFS");
                     System.err.println("      CID: " + cid);
                     System.err.println();
@@ -159,7 +169,8 @@ public class VerifierApp {
                     System.exit(1);
                 }
 
-                byte[] ciphertext = ciphertextOpt.get();
+                // Direct ciphertext - no aggregation processing needed
+                byte[] ciphertext = payloadOpt.get();
                 System.out.println("      ✓ Downloaded ciphertext from IPFS (" + ciphertext.length + " bytes)");
 
                 // Decrypt using delegate key
@@ -167,6 +178,9 @@ public class VerifierApp {
                 byte[] sessionKey = verifier.decapsulate(delegateKey, ciphertext);
                 System.out.println("      ✓ Successfully decrypted revocation certificate");
                 System.out.println("      ℹ Session key (first 16 bytes): " + bytesToHex(sessionKey));
+                System.out.printf("      • Ciphertext size: %d bytes | Session key size: %d bytes%n",
+                        CryptoMetrics.ciphertextSize(ciphertext),
+                        CryptoMetrics.sessionKeySize(sessionKey));
 
                 System.out.println();
                 System.out.println("╔════════════════════════════════════════════════════════════════╗");

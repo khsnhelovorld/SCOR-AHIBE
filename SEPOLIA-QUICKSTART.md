@@ -1,43 +1,168 @@
-# Quick Start - Sepolia Testnet
+# Sepolia Testnet Quick Start
 
-Hướng dẫn dưới đây giả định bạn **vừa clone repo**, đã có `.env` chứa `SEPOLIA_RPC_URL`, `ETH_RPC_URL`, `PRIVATE_KEY`, `IPFS_HOST`, `IPFS_PORT` (hoặc IPFS URL) và muốn benchmark bằng `runDemo` trên mạng Sepolia.
+Deploy and test SCOR-AHIBE on Ethereum Sepolia testnet in under 10 minutes.
+
+## Prerequisites
+
+- **Node.js 18+** and **npm**
+- **JDK 21+** with Gradle
+- **IPFS Desktop** running ([Download](https://docs.ipfs.tech/install/ipfs-desktop/))
+- **Sepolia ETH** ([Faucet](https://sepoliafaucet.com/))
+- **RPC URL** from [Alchemy](https://www.alchemy.com/) or [Infura](https://www.infura.io/)
+
+## Quick Start (10 commands)
 
 ```powershell
-# 0. Cài dependencies một lần sau khi clone
-npm install
-./gradlew build
+# 1. Setup
+cp env.example .env                    # Edit with your PRIVATE_KEY and RPC URL
+npm install && ./gradlew build
 
-# 1. Đảm bảo IPFS Desktop đang chạy hoặc mở terminal khác: ipfs daemon
-
-# 2. Deploy smart contract lên Sepolia (ghi deployments/sepolia.json)
+# 2. Deploy contract
 npm run hardhat:deploy:sepolia
 
-# 3. Sinh revocation record cho holder/epoch mong muốn bằng ứng dụng Java mặc định
-#    (Ứng dụng App sẽ generate + upload lên IPFS và ghi file outbox)
-$env:IPFS_HOST="127.0.0.1"
-$env:IPFS_PORT="5001"
-$env:NETWORK="sepolia"
-$env:ETH_RPC_URL="https://ethereum-sepolia-rpc.publicnode.com"
+# 3. Set environment
+$env:IPFS_HOST="127.0.0.1"; $env:IPFS_PORT="5001"
+$env:NETWORK="sepolia"; $env:ETH_RPC_URL="https://ethereum-sepolia-rpc.publicnode.com"
+$env:DELEGATE_KEY_SECRET="your-secure-passphrase"
+
+# 4. Generate revocation certificate
 ./gradlew run
 
-#    Lệnh trên sẽ tạo file app/outbox/holder_alice_example_com__2025-10-30.json
-#    (mặc định holder:alice@example.com, epoch 2025-10-30). Nếu cần ID khác,
-#    sử dụng `./gradlew runHolder` + `./gradlew runVerifier` hoặc chỉnh sửa tham số trong App.java.
-
-# 4. Publish CID + epoch lên contract vừa deploy
+# 5. Publish to blockchain
 $env:RECORD_PATH="app/outbox/holder_alice_example_com__2025-10-30.json"
 npm run hardhat:publish:sepolia
 
-# 5. Benchmark / demo toàn bộ luồng (Verifier đọc record trên Sepolia)
-$env:NETWORK="sepolia"
-$env:ETH_RPC_URL="https://ethereum-sepolia-rpc.publicnode.com"
-./gradlew runDemo -PappArgs="holder:alice@example.com,2025-10-30"
-
-# 6. (Tùy chọn) Kiểm tra lại contract state bằng script Hardhat
+# 6. Check status
 npm run hardhat:check:sepolia
 ```
 
-Ghi chú:
-- Nếu bạn thay `holderId` hoặc `epoch`, hãy chạy lại bước 3 và 4 với file `RECORD_PATH` mới.
-- `runDemo` sẽ báo lỗi “Credential not revoked” nếu bạn quên publish hoặc dùng epoch chưa có bản ghi trên chain.
-- Khi thay RPC/provider, cập nhật lại `.env` hoặc biến môi trường tương ứng trước khi chạy lệnh.
+**Expected output:**
+```
+✓ RESULT: Revocation record found!
+  Status: REVOKED (1)
+  Version: 1
+```
+
+---
+
+## Full Workflow
+
+### 1. Environment Configuration
+
+Create `.env` file:
+```bash
+SEPOLIA_RPC_URL=https://eth-sepolia.g.alchemy.com/v2/YOUR_KEY
+PRIVATE_KEY=your_wallet_private_key_without_0x
+```
+
+### 2. Holder Key Generation
+
+```powershell
+$env:DELEGATE_KEY_SECRET="your-secure-passphrase"
+./gradlew runHolder -PappArgs="holder:alice@example.com,2025-10-30"
+# Output: app/outbox/delegate_key_holder_alice_example.com_2025-10-30.key
+```
+
+### 3. Verifier Check
+
+```powershell
+./gradlew runVerifier -PappArgs="outbox/delegate_key_holder_alice_example.com_2025-10-30.key,holder:alice@example.com,2025-10-30"
+```
+
+### 4. Un-Revoke
+
+```powershell
+npx hardhat console --network sepolia
+```
+```javascript
+const c = await ethers.getContractAt("RevocationList", "<CONTRACT_ADDRESS>")
+const k = ethers.keccak256(ethers.toUtf8Bytes("holder:alice@example.com"))
+await (await c.unrevoke(k)).wait()
+.exit
+```
+```powershell
+npm run hardhat:check:sepolia
+# Output: Status: ACTIVE (0) - un-revoked!
+```
+
+### 5. Benchmark
+
+```powershell
+./gradlew runDemo -PappArgs="holder:alice@example.com,2025-10-30,100"
+# Results: benchmark_results/benchmark_*.csv
+
+./gradlew runDemo -PappArgs="holder:alice@example.com,2025-10-30"
+# 1000 times
+```
+
+---
+
+## Verification Logic
+
+| Condition | Result |
+|-----------|--------|
+| No record | ✅ VALID |
+| `T_check < T_rev` | ✅ VALID (before revocation) |
+| `T_check ≥ T_rev` AND `Status = ACTIVE` | ✅ VALID (un-revoked) |
+| `T_check ≥ T_rev` AND `Status = REVOKED` | ❌ REVOKED |
+
+---
+
+## Check Other Holders
+
+```powershell
+$env:CHECK_HOLDER_ID="holder:user1@example.com"
+$env:CHECK_EPOCH="2025-11-01"
+npm run hardhat:check:sepolia
+```
+
+---
+
+## Troubleshooting
+
+| Issue | Solution |
+|-------|----------|
+| `IPFS node not available` | Ensure IPFS Desktop is running |
+| `Gas estimation failed` | Check Sepolia ETH balance |
+| `Credential not revoked` | Verify record is published and epoch matches |
+| `Key import failed` | Use same `DELEGATE_KEY_SECRET` for export/import |
+| `AlreadyPublished` | Holder already revoked; un-revoke first to re-revoke |
+
+---
+
+## Smart Contract
+
+**Deployed on Sepolia**: Check `deployments/sepolia.json` for your contract address.
+
+### Key Functions
+
+```solidity
+// Publish revocation (1 holder = 1 IPFS file)
+function publish(bytes32 key, uint256 epoch, string ptr)
+
+// Un-revoke holder
+function unrevoke(bytes32 key)
+
+// Check status
+function getRevocationInfo(bytes32 key) returns (epoch, ptr, version, status)
+
+// Batch operations (transaction-level batching, each holder still has 1 file)
+function publishBatch(bytes32[] keys, uint256[] epochs, string[] ptrs)
+function batchCheckRevocation(bytes32[] keys)
+```
+
+---
+
+## Security Notes
+
+1. **Never commit** `.env` or private keys
+2. **Use `DELEGATE_KEY_SECRET`** for encrypted key files
+3. **Verify contract address** before publishing
+4. Native BLS12-381 provides ~128-bit security
+
+---
+
+## Next Steps
+
+- See [Usage.md](Usage.md) for all scenarios
+- See [IPFS_GUIDE.md](IPFS_GUIDE.md) for production IPFS setup

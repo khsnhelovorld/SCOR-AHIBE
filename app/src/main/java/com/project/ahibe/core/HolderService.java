@@ -1,8 +1,8 @@
 package com.project.ahibe.core;
 
 import com.project.ahibe.crypto.AhibeService;
-import it.unisa.dia.gas.crypto.jpbc.fe.ibe.dip10.params.AHIBEDIP10PublicKeyParameters;
-import it.unisa.dia.gas.crypto.jpbc.fe.ibe.dip10.params.AHIBEDIP10SecretKeyParameters;
+import com.project.ahibe.crypto.bls12.BLS12PublicKey;
+import com.project.ahibe.crypto.bls12.BLS12SecretKey;
 
 import java.util.Objects;
 
@@ -11,14 +11,14 @@ import java.util.Objects;
  */
 public class HolderService {
     private final AhibeService ahibeService;
-    private final AHIBEDIP10PublicKeyParameters publicParameters;
+    private final BLS12PublicKey publicParameters;
 
-    public HolderService(AhibeService ahibeService, AHIBEDIP10PublicKeyParameters publicParameters) {
+    public HolderService(AhibeService ahibeService, BLS12PublicKey publicParameters) {
         this.ahibeService = ahibeService;
         this.publicParameters = publicParameters;
     }
 
-    public AHIBEDIP10SecretKeyParameters deriveEpochKey(AHIBEDIP10SecretKeyParameters rootKey, String epoch) {
+    public BLS12SecretKey deriveEpochKey(BLS12SecretKey rootKey, String epoch) {
         Objects.requireNonNull(rootKey, "rootKey must not be null");
         Objects.requireNonNull(epoch, "epoch must not be null");
         return ahibeService.delegate(publicParameters, rootKey, epoch);

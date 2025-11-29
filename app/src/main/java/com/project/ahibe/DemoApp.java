@@ -1,259 +1,3 @@
-/** 
-package com.project.ahibe;
-
-import com.project.ahibe.core.HolderService;
-import com.project.ahibe.core.IssuerService;
-import com.project.ahibe.core.PkgService;
-import com.project.ahibe.core.VerifierService;
-import com.project.ahibe.crypto.AhibeService;
-import com.project.ahibe.eth.DeploymentRegistry;
-import com.project.ahibe.eth.RevocationListClient;
-import com.project.ahibe.ipfs.IPFSService;
-import com.project.ahibe.ipfs.IPFSStorageFetcher;
-import it.unisa.dia.gas.crypto.jpbc.fe.ibe.dip10.params.AHIBEDIP10PublicKeyParameters;
-import it.unisa.dia.gas.crypto.jpbc.fe.ibe.dip10.params.AHIBEDIP10SecretKeyParameters;
-
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.util.Optional;
-
-public class DemoApp {
-    public static void main(String[] args) {
-        try {
-            if (args.length < 2) {
-                System.err.println("Usage: java DemoApp <holderId> <epoch>");
-                System.err.println("Example: java DemoApp holder:alice@example.com 2025-10-30");
-                System.exit(1);
-            }
-
-            String holderId = args[0];
-            String epoch = args[1];
-
-            System.out.println("╔════════════════════════════════════════════════════════════════╗");
-            System.out.println("║              DEMO APPLICATION - Complete Flow                  ║");
-            System.out.println("║         Holder → Delegate Key → Verifier (Same JVM)           ║");
-            System.out.println("╚════════════════════════════════════════════════════════════════╝");
-            System.out.println();
-            
-            // ==================== PART 1: HOLDER ====================
-            System.out.println("═══════════════════════════════════════════════════════════════");
-            System.out.println("PART 1: HOLDER - Generate Delegate Key");
-            System.out.println("═══════════════════════════════════════════════════════════════");
-            System.out.println();
-            System.out.println("Holder ID: " + holderId);
-            System.out.println("Epoch:     " + epoch);
-            System.out.println();
-
-            // Initialize AHIBE service
-            System.out.println("[1/5] Initializing AHIBE cryptographic service...");
-            AhibeService ahibeService = new AhibeService(160, 3);
-            System.out.println("      ✓ AHIBE service initialized (160-bit security, depth 3)");
-
-            // Bootstrap PKG
-            System.out.println();
-            System.out.println("[2/5] Bootstrapping PKG and obtaining public parameters...");
-            PkgService pkg = new PkgService(ahibeService);
-            AhibeService.SetupResult setup = pkg.bootstrap();
-            AHIBEDIP10PublicKeyParameters publicKey = setup.publicKey();
-            System.out.println("      ✓ PKG bootstrapped, public parameters obtained");
-
-            // Get root key from Issuer
-            System.out.println();
-            System.out.println("[3/5] Requesting root key from Issuer...");
-            IssuerService issuer = new IssuerService(ahibeService, setup);
-            AHIBEDIP10SecretKeyParameters rootKey = issuer.issueRootKey(holderId);
-            System.out.println("      ✓ Root key (SK_H) received from Issuer");
-
-            // Holder derives delegate key
-            System.out.println();
-            System.out.println("[4/5] Deriving epoch-specific delegate key...");
-            HolderService holder = new HolderService(ahibeService, publicKey);
-            AHIBEDIP10SecretKeyParameters delegateKey = holder.deriveEpochKey(rootKey, epoch);
-            System.out.println("      ✓ Delegate key (SK_{H||T}) derived for epoch: " + epoch);
-
-            // Export delegate key
-            System.out.println();
-            System.out.println("[5/5] Exporting delegate key to file...");
-            Path outputDir = Paths.get("outbox");
-            String fileName = "delegate_key_" + sanitize(holderId) + "_" + sanitize(epoch) + ".key";
-            Path outputPath = outputDir.resolve(fileName);
-            KeySerializer.exportDelegateKey(delegateKey, outputPath);
-            System.out.println("      ✓ Delegate key exported (in-memory storage)");
-
-            System.out.println();
-            System.out.println("✓ HOLDER COMPLETED - Delegate key ready in memory");
-            
-            // Small pause for visual separation
-            System.out.println();
-            System.out.println("Press Enter to continue to Verifier part...");
-            System.in.read();
-            
-            // ==================== PART 2: VERIFIER ====================
-            System.out.println();
-            System.out.println("═══════════════════════════════════════════════════════════════");
-            System.out.println("PART 2: VERIFIER - Verify Revocation Status");
-            System.out.println("═══════════════════════════════════════════════════════════════");
-            System.out.println();
-
-            // Import delegate key (from in-memory storage in same JVM)
-            System.out.println("[1/6] Importing delegate key from Holder...");
-            AHIBEDIP10SecretKeyParameters importedKey = KeySerializer.importDelegateKey(outputPath, publicKey);
-            System.out.println("      ✓ Delegate key imported from in-memory storage");
-            System.out.println("      ℹ Same JVM process - key still in memory!");
-
-            // Initialize IPFS
-            System.out.println();
-            System.out.println("[2/6] Connecting to IPFS node...");
-            IPFSService ipfsService = initializeIPFS();
-            if (ipfsService == null) {
-                System.err.println("      ✗ IPFS service not available. Cannot verify.");
-                System.exit(1);
-            }
-            System.out.println("      ✓ IPFS node is available and responding");
-
-            // Initialize blockchain client
-            System.out.println();
-            System.out.println("[3/6] Connecting to blockchain network...");
-            String network = System.getenv().getOrDefault("NETWORK", "hardhat");
-            String rpcUrl = System.getenv().getOrDefault("ETH_RPC_URL", "http://127.0.0.1:8545");
-
-            // Use absolute path or parent directory to find deployments folder
-            Path deploymentsPath = Paths.get("deployments");
-            if (!deploymentsPath.toFile().exists()) {
-                // Try parent directory (when running from app/ folder)
-                deploymentsPath = Paths.get("..").resolve("deployments");
-            }
-            DeploymentRegistry registry = new DeploymentRegistry(deploymentsPath);
-            Optional<DeploymentMetadata> deployment = registry.load(network);
-
-            if (deployment.isEmpty()) {
-                System.err.println("      ✗ No deployment found for network: " + network);
-                System.err.println("      Please run: npm run hardhat:deploy:local");
-                System.exit(1);
-            }
-
-            String contractAddress = deployment.get().address();
-            System.out.println("      ✓ Connected to network: " + network);
-            System.out.println("      ✓ Using contract at: " + contractAddress);
-
-            // Query blockchain
-            System.out.println();
-            System.out.println("[4/6] Querying blockchain for revocation record...");
-            try (RevocationListClient client = new RevocationListClient(rpcUrl, contractAddress)) {
-                VerifierService verifier = new VerifierService(ahibeService);
-                VerifierService.VerificationResult verification = verifier.verifyRevocation(client, holderId, epoch);
-
-                if (verification.isValid()) {
-                    System.out.println("      ℹ " + verification.message());
-                    System.out.println();
-                    System.out.println("╔════════════════════════════════════════════════════════════════╗");
-                    System.out.println("║                  VERIFICATION RESULT: NOT REVOKED              ║");
-                    System.out.println("╚════════════════════════════════════════════════════════════════╝");
-                    System.out.println();
-                    System.out.println("Status:    NOT REVOKED");
-                    System.out.println("Holder:    " + holderId);
-                    System.out.println("Epoch:     " + epoch);
-                    System.out.println("Reason:    " + verification.message());
-                    System.out.println();
-                    System.out.println("⚠ Possible reasons:");
-                    System.out.println("  1. Revocation was never published to this contract");
-                    System.out.println("  2. Hardhat node was restarted (contract state lost)");
-                    System.out.println("  3. Different contract address or network");
-                    System.out.println();
-                    System.out.println("To fix:");
-                    System.out.println("  1. Ensure Hardhat node is still running from deployment/publish time");
-                    System.out.println("  2. Or republish the revocation:");
-                    System.out.println("     $env:RECORD_PATH=\"app/outbox/holder_alice_example_com__2025-10-30.json\"");
-                    System.out.println("     npm run hardhat:publish");
-                    System.out.println("  3. Or check contract state:");
-                    System.out.println("     npm run hardhat:check");
-                    return;
-                }
-
-                String cid = Optional.ofNullable(verification.pointer())
-                        .filter(ptr -> !ptr.isBlank())
-                        .orElseThrow(() -> new IllegalStateException("Revocation pointer missing in record"));
-                System.out.println("      ✓ Found revocation CID: " + cid);
-
-                // Download from IPFS
-                System.out.println();
-                System.out.println("[5/6] Downloading ciphertext from IPFS...");
-                IPFSStorageFetcher fetcher = new IPFSStorageFetcher(ipfsService);
-                Optional<byte[]> ciphertextOpt = fetcher.fetch(cid);
-
-                if (ciphertextOpt.isEmpty()) {
-                    System.err.println("      ✗ Failed to download from IPFS");
-                    System.exit(1);
-                }
-
-                byte[] ciphertext = ciphertextOpt.get();
-                System.out.println("      ✓ Downloaded ciphertext (" + ciphertext.length + " bytes)");
-
-                // Decrypt
-                System.out.println();
-                System.out.println("[6/6] Decrypting with delegate key...");
-                byte[] sessionKey = verifier.decapsulate(importedKey, ciphertext);
-                System.out.println("      ✓ Successfully decrypted!");
-                System.out.println("      Session key: " + bytesToHex(sessionKey));
-
-                System.out.println();
-                System.out.println("╔════════════════════════════════════════════════════════════════╗");
-                System.out.println("║                   VERIFICATION RESULT: REVOKED                 ║");
-                System.out.println("╚════════════════════════════════════════════════════════════════╝");
-                System.out.println();
-                System.out.println("Status:        REVOKED");
-                System.out.println("Holder:        " + holderId);
-                System.out.println("Epoch:         " + epoch);
-                System.out.println("CID:           " + cid);
-                System.out.println("Verification:  SUCCESS - Delegate key decrypted the certificate");
-                System.out.println();
-            }
-
-        } catch (Exception e) {
-            System.err.println();
-            System.err.println("╔════════════════════════════════════════════════════════════════╗");
-            System.err.println("║                          ERROR                                 ║");
-            System.err.println("╚════════════════════════════════════════════════════════════════╝");
-            System.err.println("Error: " + e.getMessage());
-            e.printStackTrace();
-            System.exit(1);
-        }
-    }
-
-    private static IPFSService initializeIPFS() {
-        String ipfsHost = System.getenv("IPFS_HOST");
-        String ipfsPort = System.getenv("IPFS_PORT");
-        String ipfsUrl = System.getenv("IPFS_URL");
-
-        IPFSService ipfsService;
-        if (ipfsUrl != null && !ipfsUrl.isBlank()) {
-            ipfsService = new IPFSService(ipfsUrl);
-        } else if (ipfsHost != null && !ipfsHost.isBlank()) {
-            int port = ipfsPort != null ? Integer.parseInt(ipfsPort) : 5001;
-            ipfsService = new IPFSService(ipfsHost, port);
-        } else {
-            ipfsService = new IPFSService("127.0.0.1", 5001);
-        }
-
-        return ipfsService.isAvailable() ? ipfsService : null;
-    }
-
-    private static String sanitize(String input) {
-        return input.replaceAll("[^a-zA-Z0-9-_.]", "_");
-    }
-
-    private static String bytesToHex(byte[] bytes) {
-        if (bytes == null || bytes.length == 0) return "(empty)";
-        StringBuilder result = new StringBuilder();
-        int limit = Math.min(16, bytes.length);
-        for (int i = 0; i < limit; i++) {
-            result.append(String.format("%02x", bytes[i]));
-        }
-        if (bytes.length > 16) result.append("...");
-        return result.toString();
-    }
-}
-*/
 
 package com.project.ahibe;
 
@@ -262,15 +6,23 @@ import com.project.ahibe.core.IssuerService;
 import com.project.ahibe.core.PkgService;
 import com.project.ahibe.core.VerifierService;
 import com.project.ahibe.crypto.AhibeService;
+import com.project.ahibe.crypto.CryptoMetrics;
+import com.project.ahibe.crypto.config.PairingProfile;
 import com.project.ahibe.eth.DeploymentRegistry;
 import com.project.ahibe.eth.RevocationListClient;
 import com.project.ahibe.ipfs.IPFSService;
 import com.project.ahibe.ipfs.IPFSStorageFetcher;
-import it.unisa.dia.gas.crypto.jpbc.fe.ibe.dip10.params.AHIBEDIP10PublicKeyParameters;
-import it.unisa.dia.gas.crypto.jpbc.fe.ibe.dip10.params.AHIBEDIP10SecretKeyParameters;
+import com.project.ahibe.crypto.bls12.BLS12PublicKey;
+import com.project.ahibe.crypto.bls12.BLS12SecretKey;
 
+import java.io.FileWriter;
+import java.io.IOException;
+import java.io.PrintWriter;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -279,6 +31,15 @@ import java.util.Optional;
 
 /**
  * Demo Application with BENCHMARKING (1000 iterations)
+ * 
+ * SCOR-AHIBE: 1 on-chain key = 1 off-chain file.
+ * Direct CID lookup with O(1) complexity.
+ * No aggregation or Merkle proofs.
+ * 
+ * Features:
+ * - Detailed timing for each operation
+ * - CSV export for benchmark results
+ * - Statistics: avg, min, max, stddev
  */
 public class DemoApp {
     // Statistics for each operation
@@ -315,21 +76,32 @@ public class DemoApp {
     }
 
     static Map<String, OperationStats> statsMap = new HashMap<>();
-    static final int ITERATIONS = 1000;
+    static int ITERATIONS = 1000;
+    static String CSV_OUTPUT_DIR = "benchmark_results";
 
     public static void main(String[] args) {
         try {
             if (args.length < 2) {
-                System.err.println("Usage: java DemoApp <holderId> <epoch>");
+                System.err.println("Usage: java DemoApp <holderId> <epoch> [iterations]");
                 System.err.println("Example: java DemoApp holder:alice@example.com 2025-10-30");
+                System.err.println("         java DemoApp holder:alice@example.com 2025-10-30 100");
                 System.exit(1);
             }
 
             String holderId = args[0];
             String epoch = args[1];
+            
+            // Optional: custom iteration count
+            if (args.length >= 3) {
+                try {
+                    ITERATIONS = Integer.parseInt(args[2]);
+                } catch (NumberFormatException e) {
+                    System.err.println("Warning: Invalid iteration count, using default: " + ITERATIONS);
+                }
+            }
 
             System.out.println("==========================================================================================");
-            System.out.println("         SCOR-AHIBE BENCHMARK RUNNER (1000 iterations)         ");
+            System.out.println("         SCOR-AHIBE BENCHMARK RUNNER (" + ITERATIONS + " iterations)         ");
             System.out.println("==========================================================================================");
             System.out.println();
             System.out.println("Holder ID: " + holderId);
@@ -340,20 +112,22 @@ public class DemoApp {
             // ==================== ONE-TIME SETUP ====================
             System.out.println("[Setup] Initializing system (one-time)...");
             long tStart = System.nanoTime();
-            AhibeService ahibeService = new AhibeService(160, 3);
+            // Always use BLS12-381 (AHIBE_PROFILE removed)
+            PairingProfile profile = PairingProfile.BLS12_381;
+            AhibeService ahibeService = new AhibeService(profile, 3);
             double setupTime = (System.nanoTime() - tStart) / 1_000_000.0;
             System.out.printf("   -> System Setup: %.4f ms (one-time)%n", setupTime);
 
             tStart = System.nanoTime();
             PkgService pkg = new PkgService(ahibeService);
             AhibeService.SetupResult setup = pkg.bootstrap();
-            AHIBEDIP10PublicKeyParameters publicKey = setup.publicKey();
+            BLS12PublicKey publicKey = setup.publicKey();
             double pkgTime = (System.nanoTime() - tStart) / 1_000_000.0;
             System.out.printf("   -> PKG Bootstrap: %.4f ms (one-time)%n", pkgTime);
 
             tStart = System.nanoTime();
             IssuerService issuer = new IssuerService(ahibeService, setup);
-            AHIBEDIP10SecretKeyParameters rootKey = issuer.issueRootKey(holderId);
+            BLS12SecretKey rootKey = issuer.issueRootKey(holderId);
             double issuerTime = (System.nanoTime() - tStart) / 1_000_000.0;
             System.out.printf("   -> Issuer Root Key Gen: %.4f ms (one-time)%n", issuerTime);
 
@@ -386,9 +160,11 @@ public class DemoApp {
                 cid = Optional.ofNullable(verification.pointer())
                         .filter(ptr -> !ptr.isBlank())
                         .orElseThrow(() -> new RuntimeException("Revocation record missing storage pointer"));
-                
+
+                // Direct CID fetch - exactly one file per verification (SCOR-AHIBE principle)
                 IPFSStorageFetcher fetcher = new IPFSStorageFetcher(ipfsService);
                 ciphertext = fetcher.fetch(cid).orElseThrow(() -> new RuntimeException("Failed to fetch ciphertext from IPFS"));
+                System.out.printf("   -> Ciphertext size: %d bytes%n", CryptoMetrics.ciphertextSize(ciphertext));
             }
 
             // ==================== BENCHMARK LOOP ====================
@@ -399,7 +175,7 @@ public class DemoApp {
             for (int i = 0; i < ITERATIONS; i++) {
                 // Holder: Delegate Key Generation
                 tStart = System.nanoTime();
-                AHIBEDIP10SecretKeyParameters delegateKey = holder.deriveEpochKey(rootKey, epoch);
+                BLS12SecretKey delegateKey = holder.deriveEpochKey(rootKey, epoch);
                 recordTime("Holder: Delegate Key Gen", tStart, "Derive SK_{H||Epoch} (Off-chain)");
 
                 // Verifier: Query Blockchain
@@ -409,11 +185,11 @@ public class DemoApp {
                 }
                 recordTime("Verifier: Query Blockchain", tStart, "Get CID (View call)");
 
-                // Verifier: Fetch IPFS
+                // Verifier: Fetch IPFS (direct CID fetch - O(1) lookup)
                 tStart = System.nanoTime();
                 IPFSStorageFetcher fetcher = new IPFSStorageFetcher(ipfsService);
-                fetcher.fetch(cid);
-                recordTime("Verifier: Fetch IPFS", tStart, "Download Ciphertext (" + ciphertext.length + " bytes)");
+                fetcher.fetch(cid).orElse(null);
+                recordTime("Verifier: Fetch IPFS", tStart, "Download (" + ciphertext.length + " bytes)");
 
                 // Verifier: Decrypt
                 tStart = System.nanoTime();
@@ -433,6 +209,10 @@ public class DemoApp {
 
             // ==================== PRINT REPORT ====================
             printReport();
+            
+            // ==================== EXPORT CSV ====================
+            String csvPath = exportToCsv(holderId, epoch);
+            System.out.println("Benchmark results exported to: " + csvPath);
 
         } catch (Exception e) {
             System.err.println("Error: " + e.getMessage());
@@ -451,7 +231,7 @@ public class DemoApp {
     private static void printReport() {
         System.out.println();
         System.out.println("==========================================================================================");
-        System.out.println("|                    SCOR-AHIBE PERFORMANCE REPORT (1000 iterations)                    |");
+        System.out.println("|                    SCOR-AHIBE PERFORMANCE REPORT (" + ITERATIONS + " iterations)                    |");
         System.out.println("|========================================================================================|");
         System.out.println();
         System.out.println(String.format("| %-35s | %-10s | %-10s | %-10s | %-10s | %-20s |",
@@ -472,6 +252,67 @@ public class DemoApp {
         System.out.println();
         System.out.println("NOTE: Add Gas costs from Hardhat logs manually to this table.");
         System.out.println("==========================================================================================");
+    }
+    
+    /**
+     * Export benchmark results to CSV file.
+     * 
+     * @param holderId The holder ID used in benchmark
+     * @param epoch The epoch used in benchmark
+     * @return Path to the exported CSV file
+     */
+    private static String exportToCsv(String holderId, String epoch) throws IOException {
+        // Create output directory
+        Path outputDir = Paths.get(CSV_OUTPUT_DIR);
+        Files.createDirectories(outputDir);
+        
+        // Generate filename with timestamp
+        String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss"));
+        String safeHolderId = holderId.replaceAll("[^a-zA-Z0-9._-]", "_");
+        String filename = String.format("benchmark_%s_%s_%s.csv", safeHolderId, epoch, timestamp);
+        Path csvPath = outputDir.resolve(filename);
+        
+        try (PrintWriter writer = new PrintWriter(new FileWriter(csvPath.toFile()))) {
+            // Write header
+            writer.println("operation,avg_ms,min_ms,max_ms,stddev_ms,iterations,note,holder_id,epoch,timestamp");
+            
+            // Write data rows
+            for (OperationStats stats : statsMap.values()) {
+                writer.printf("%s,%.6f,%.6f,%.6f,%.6f,%d,\"%s\",\"%s\",\"%s\",\"%s\"%n",
+                    escapeCSV(stats.operation),
+                    stats.getAverage(),
+                    stats.getMin(),
+                    stats.getMax(),
+                    stats.getStdDev(),
+                    stats.times.size(),
+                    escapeCSV(stats.note),
+                    escapeCSV(holderId),
+                    escapeCSV(epoch),
+                    timestamp
+                );
+            }
+            
+            // Write raw data section (optional, for detailed analysis)
+            writer.println();
+            writer.println("# Raw timing data (all iterations)");
+            writer.println("operation,iteration,time_ms");
+            for (OperationStats stats : statsMap.values()) {
+                for (int i = 0; i < stats.times.size(); i++) {
+                    writer.printf("%s,%d,%.6f%n", 
+                        escapeCSV(stats.operation), 
+                        i + 1, 
+                        stats.times.get(i));
+                }
+            }
+        }
+        
+        return csvPath.toString();
+    }
+    
+    private static String escapeCSV(String value) {
+        if (value == null) return "";
+        // Escape quotes and handle special characters
+        return value.replace("\"", "\"\"");
     }
 
     private static IPFSService initializeIPFS() {

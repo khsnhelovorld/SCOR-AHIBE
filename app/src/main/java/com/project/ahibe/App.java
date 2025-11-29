@@ -6,6 +6,8 @@ import com.project.ahibe.core.PkgService;
 import com.project.ahibe.core.RevocationRecord;
 import com.project.ahibe.core.VerifierService;
 import com.project.ahibe.crypto.AhibeService;
+import com.project.ahibe.crypto.CryptoMetrics;
+import com.project.ahibe.crypto.config.PairingProfile;
 import com.project.ahibe.eth.DeploymentRegistry;
 import com.project.ahibe.eth.RevocationListClient;
 import com.project.ahibe.ipfs.IPFSService;
@@ -19,10 +21,16 @@ import java.util.Arrays;
 
 public class App {
     public static void main(String[] args) {
-        AhibeService ahibeService = new AhibeService(160, 3);
+        try {
+            PairingProfile profile = resolveProfile();
+        AhibeService ahibeService = new AhibeService(profile, 3);
+        System.out.println("Using AHIBE profile: " + profile.metadata().id() +
+                " (~" + profile.estimatedSecurityBits() + "-bit security)");
 
         PkgService pkg = new PkgService(ahibeService);
         var setup = pkg.bootstrap();
+        int publicKeySize = CryptoMetrics.estimatePublicKeySize(setup.publicKey());
+        System.out.printf("Public parameter footprint: %d bytes%n", publicKeySize);
 
         // Initialize IPFS service if configured
         IPFSService ipfsService = null;
@@ -72,7 +80,9 @@ public class App {
 
         System.out.printf("Recovered session key matches: %s%n",
                 Arrays.equals(record.sessionKey(), recovered) ? "YES" : "NO");
-        System.out.printf("Ciphertext length (bytes): %d%n", record.ciphertext().length);
+        System.out.printf("Ciphertext length (bytes): %d | Session key length: %d%n",
+                CryptoMetrics.ciphertextSize(record.ciphertext()),
+                CryptoMetrics.sessionKeySize(record.sessionKey()));
 
         // Use IPFS fetcher if available, otherwise fallback to local file fetcher
         StorageFetcher storageFetcher;
@@ -86,53 +96,61 @@ public class App {
 
         RevocationRecordWriter writer = new RevocationRecordWriter(Paths.get("outbox"));
         try {
-            Path output = writer.write(record);
+            Path output = writer.write(record, profile.id());
             System.out.printf("Revocation material exported to: %s%n", output.toAbsolutePath());
         } catch (Exception e) {
             throw new RuntimeException("Failed to export revocation record", e);
         }
 
-        // Verify from blockchain and IPFS
-        DeploymentRegistry registry = new DeploymentRegistry(Paths.get("deployments"));
-        // Try to load deployment from any network (hardhat, sepolia, mumbai, etc.)
-        String[] networks = {"hardhat", "sepolia", "mumbai", "goerli"};
-        for (String network : networks) {
-            registry.load(network).ifPresent(deployment -> {
-                String rpcUrl = System.getenv().getOrDefault("ETH_RPC_URL", 
-                    network.equals("hardhat") ? "http://127.0.0.1:8545" : "");
-                if (rpcUrl.isEmpty() && !network.equals("hardhat")) {
-                    System.out.println("Skipping network " + network + " - ETH_RPC_URL not set");
-                    return;
-                }
-                System.out.println("Verifying from blockchain network: " + network);
-                System.out.println("Contract address: " + deployment.address());
-                try (RevocationListClient client = new RevocationListClient(rpcUrl, deployment.address())) {
-                    // Use new verification logic with time comparison
-                    VerifierService.VerificationResult result = verifier.verifyRevocation(client, holderId, epoch);
-                    System.out.println("Verification result: " + result.message());
-                    
-                    if (!result.isValid() && result.pointer() != null && !result.pointer().isEmpty()) {
-                        System.out.printf("On-chain CID: %s%n", result.pointer());
-                        System.out.printf(
-                                "On-chain pointer matches local CID: %s%n",
-                                record.storagePointer().equals(result.pointer()) ? "YES" : "NO"
-                        );
-                        
-                        // Download from IPFS and verify using delegate key
-                        if (storageFetcher != null) {
-                            storageFetcher.fetch(result.pointer()).ifPresent(ciphertext -> {
-                                byte[] onChainRecovered = verifier.decapsulate(epochKey, ciphertext);
-                                System.out.printf(
-                                        "On-chain decapsulation (from IPFS) matches session key: %s%n",
-                                        Arrays.equals(onChainRecovered, record.sessionKey()) ? "YES" : "NO"
-                                );
-                            });
-                        }
+            // Verify from blockchain and IPFS
+            DeploymentRegistry registry = new DeploymentRegistry(Paths.get("deployments"));
+            // Try to load deployment from any network (hardhat, sepolia, mumbai, etc.)
+            String[] networks = {"hardhat", "sepolia", "mumbai", "goerli"};
+            for (String network : networks) {
+                registry.load(network).ifPresent(deployment -> {
+                    String rpcUrl = System.getenv().getOrDefault("ETH_RPC_URL", 
+                        network.equals("hardhat") ? "http://127.0.0.1:8545" : "");
+                    if (rpcUrl.isEmpty() && !network.equals("hardhat")) {
+                        System.out.println("Skipping network " + network + " - ETH_RPC_URL not set");
+                        return;
                     }
-                } catch (Exception e) {
-                    System.err.println("Failed to verify on-chain pointer or ciphertext: " + e.getMessage());
-                }
-            });
+                    System.out.println("Verifying from blockchain network: " + network);
+                    System.out.println("Contract address: " + deployment.address());
+                    try (RevocationListClient client = new RevocationListClient(rpcUrl, deployment.address())) {
+                        // Use new verification logic with time comparison
+                        VerifierService.VerificationResult result = verifier.verifyRevocation(client, holderId, epoch);
+                        System.out.println("Verification result: " + result.message());
+                        
+                        if (!result.isValid() && result.pointer() != null && !result.pointer().isEmpty()) {
+                            System.out.printf("On-chain pointer: %s%n", result.pointer());
+                            System.out.printf(
+                                    "On-chain pointer matches local CID: %s%n",
+                                    record.storagePointer().equals(result.pointer()) ? "YES" : "NO"
+                            );
+                            
+                            // Download from IPFS and verify using delegate key
+                            if (storageFetcher != null) {
+                                verifier.fetchAndDecapsulate(client, storageFetcher, epochKey, holderId, epoch)
+                                        .ifPresent(onChainRecovered -> System.out.printf(
+                                                "On-chain decapsulation (from IPFS) matches session key: %s%n",
+                                                Arrays.equals(onChainRecovered, record.sessionKey()) ? "YES" : "NO"
+                                        ));
+                            }
+                        }
+                    } catch (Exception e) {
+                        System.err.println("Failed to verify on-chain pointer or ciphertext: " + e.getMessage());
+                    }
+                });
+            }
+        } catch (Exception e) {
+            System.err.println("Error: " + e.getMessage());
+            e.printStackTrace();
+            System.exit(1);
         }
+    }
+
+    private static PairingProfile resolveProfile() {
+        // Always use BLS12-381 (AHIBE_PROFILE removed)
+        return PairingProfile.BLS12_381;
     }
 }

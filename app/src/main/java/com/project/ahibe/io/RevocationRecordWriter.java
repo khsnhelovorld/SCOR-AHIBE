@@ -9,6 +9,12 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 
+/**
+ * Writer for revocation records to JSON files.
+ * 
+ * SCOR-AHIBE: 1 on-chain key = 1 off-chain file.
+ * Each holder has exactly one ciphertext file on IPFS.
+ */
 public class RevocationRecordWriter {
 
     private final Path outputDirectory;
@@ -18,12 +24,16 @@ public class RevocationRecordWriter {
     }
 
     public Path write(RevocationRecord record) throws IOException {
+        return write(record, null);
+    }
+    
+    public Path write(RevocationRecord record, String profileId) throws IOException {
         Files.createDirectories(outputDirectory);
 
         String fileName = buildFileName(record);
         Path target = outputDirectory.resolve(fileName);
 
-        String json = toJson(record);
+        String json = toJson(record, profileId);
         Files.writeString(
                 target,
                 json,
@@ -47,21 +57,28 @@ public class RevocationRecordWriter {
     }
 
     private String toJson(RevocationRecord record) {
+        return toJson(record, null);
+    }
+    
+    private String toJson(RevocationRecord record, String profileId) {
         String sessionKeyB64 = ByteEncoding.toBase64(record.sessionKey());
         String ciphertextHex = ByteEncoding.toHex(record.ciphertext());
         String pointer = record.storagePointer() == null ? "" : record.storagePointer();
-        return """
+        String profileField = profileId != null ? 
+            String.format("\n                  \"profileId\": \"%s\",", profileId) : "";
+        return String.format("""
                 {
                   "holderId": "%s",
-                  "epoch": "%s",
+                  "epoch": "%s",%s
                   "sessionKey": "%s",
                   "ciphertext": "%s",
                   "storagePointer": "%s",
                   "exportedAt": "%s"
                 }
-                """.formatted(
+                """,
                 record.holderId(),
                 record.epoch(),
+                profileField,
                 sessionKeyB64,
                 ciphertextHex,
                 pointer,
@@ -69,4 +86,3 @@ public class RevocationRecordWriter {
         );
     }
 }
-

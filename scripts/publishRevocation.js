@@ -2,6 +2,13 @@ const hre = require("hardhat");
 const fs = require("fs");
 const path = require("path");
 
+/**
+ * Publish revocation record to the smart contract.
+ * 
+ * SCOR-AHIBE: 1 on-chain key = 1 off-chain file.
+ * Each holder has exactly one IPFS file (direct CID pointer).
+ * No aggregation or Merkle proofs.
+ */
 async function main() {
   const [issuer] = await hre.ethers.getSigners();
   console.log(`Deploying from account: ${issuer.address}`);
@@ -22,32 +29,43 @@ async function main() {
     throw new Error(`Deployment file not found: ${deploymentFile}. Please deploy the contract first.`);
   }
 
-  const record = JSON.parse(fs.readFileSync(recordPath, "utf8"));
+  const payload = JSON.parse(fs.readFileSync(recordPath, "utf8"));
   const deployment = JSON.parse(fs.readFileSync(deploymentFile, "utf8"));
 
   const contract = await hre.ethers.getContractAt("RevocationList", deployment.address, issuer);
 
-  // Use static key: keccak256(holderId) only
-  const key = hre.ethers.keccak256(hre.ethers.toUtf8Bytes(record.holderId));
+  // SCOR-AHIBE: Only single record publishing (no aggregation)
+  await publishSingle(contract, deployment.address, payload, issuer.address);
+}
 
-  // Convert epoch string (YYYY-MM-DD) to days since epoch (1970-01-01)
-  const epochDate = new Date(record.epoch + "T00:00:00Z");
-  const epochDays = Math.floor(epochDate.getTime() / (1000 * 60 * 60 * 24));
+async function publishSingle(contract, contractAddress, record, issuerAddress) {
+  ensure(record.holderId, "holderId missing in record JSON");
+  ensure(record.epoch, "epoch missing in record JSON");
+  ensure(record.storagePointer, "storagePointer missing in record JSON");
+
+  const key = hre.ethers.keccak256(hre.ethers.toUtf8Bytes(record.holderId));
+  const epochDays = formatEpochDays(record.epoch);
 
   console.log(`Publishing revocation for ${record.holderId} @ ${record.epoch}`);
-  console.log(`Contract address: ${deployment.address}`);
-  console.log(`Static key (keccak256 of holderId): ${key}`);
-  console.log(`Epoch (days since 1970-01-01): ${epochDays}`);
-  if (!record.storagePointer) {
-    throw new Error("storagePointer missing in record JSON. Upload ciphertext to IPFS and set storagePointer.");
-  }
+  console.log(`Contract: ${contractAddress}`);
   console.log(`IPFS CID: ${record.storagePointer}`);
-  
+
+  // SCOR-AHIBE simplified contract: publish(key, epochDays, storagePointer)
   const tx = await contract.publish(key, epochDays, record.storagePointer);
-  console.log(`Transaction submitted: ${tx.hash}`);
-  console.log("Waiting for confirmation...");
+  console.log(` → tx: ${tx.hash}`);
   await tx.wait();
-  console.log(`Transaction confirmed! Hash: ${tx.hash}`);
+  console.log("   ✓ Confirmed");
+}
+
+function formatEpochDays(epochStr) {
+  const epochDate = new Date(epochStr + "T00:00:00Z");
+  return Math.floor(epochDate.getTime() / (1000 * 60 * 60 * 24));
+}
+
+function ensure(condition, message) {
+  if (!condition) {
+    throw new Error(message);
+  }
 }
 
 main()
@@ -56,4 +74,3 @@ main()
     console.error(err);
     process.exit(1);
   });
-

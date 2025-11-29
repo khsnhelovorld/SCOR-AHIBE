@@ -6,6 +6,7 @@ import com.project.ahibe.core.PkgService;
 import com.project.ahibe.core.RevocationRecord;
 import com.project.ahibe.core.VerifierService;
 import com.project.ahibe.crypto.AhibeService;
+import com.project.ahibe.crypto.config.PairingProfile;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -16,7 +17,7 @@ class AppTest {
 
     @Test
     void roundTripEncapsulationMatches() {
-        AhibeService service = new AhibeService(128, 3);
+        AhibeService service = new AhibeService(PairingProfile.BLS12_381, 3);
         PkgService pkg = new PkgService(service);
         var setup = pkg.bootstrap();
 
@@ -38,7 +39,7 @@ class AppTest {
 
     @Test
     void exceedingHierarchyDepthThrows() {
-        AhibeService service = new AhibeService(128, 1);
+        AhibeService service = new AhibeService(PairingProfile.BLS12_381, 1);
         PkgService pkg = new PkgService(service);
         var setup = pkg.bootstrap();
         IssuerService issuer = new IssuerService(service, setup);

@@ -14,19 +14,25 @@ plugins {
 repositories {
     // Use Maven Central for resolving dependencies.
     mavenCentral()
-    flatDir {
-        dirs '../libs/jars'
-    }
 }
 
 dependencies {
-    implementation files('../libs/jars/jpbc-api-2.0.0.jar')
-    implementation files('../libs/jars/jpbc-crypto-2.0.0.jar')
-    implementation files('../libs/jars/jpbc-mm-2.0.0.jar')
-    implementation files('../libs/jars/jpbc-plaf-2.0.0.jar')
+    // BLS12-381 implementation using BouncyCastle with proper curve parameters
     implementation libs.bouncycastle
+    
+    // HKDF for secure key derivation
+    implementation 'org.bouncycastle:bcprov-jdk18on:1.78.1'
+    
+    // NOTE: Native BLS12-381 library (jblst) is OPTIONAL
+    // The system will automatically use simulated implementation if native is unavailable.
+    // To enable native pairing, add to libs folder or use:
+    //   implementation 'tech.pegasys:jblst:0.3.11' (requires Consensys Maven repo)
+    // The NativeBLS12Pairing class gracefully handles missing native library.
+    
     implementation libs.web3j.core
     implementation libs.jackson.databind
+    // Jackson support for Java 8 date/time types
+    implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.17.0'
     // IPFS client - using HTTP directly
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
 }
@@ -89,6 +95,18 @@ task runDemo(type: JavaExec) {
     mainClass = 'com.project.ahibe.DemoApp'
     standardInput = System.in  // Allow user input for pause
     // Pass arguments via -PappArgs="arg1,arg2"
+    doFirst {
+        if (project.hasProperty('appArgs')) {
+            args(project.property('appArgs').split(','))
+        }
+    }
+}
+
+task runBatchPublisher(type: JavaExec) {
+    group = 'application'
+    description = 'Generate aggregated revocation indices from CSV batches'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.project.ahibe.BatchPublisherApp'
     doFirst {
         if (project.hasProperty('appArgs')) {
             args(project.property('appArgs').split(','))

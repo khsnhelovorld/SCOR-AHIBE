@@ -3,11 +3,12 @@ package com.project.ahibe.eth;
 import org.web3j.abi.FunctionEncoder;
 import org.web3j.abi.FunctionReturnDecoder;
 import org.web3j.abi.TypeReference;
+import org.web3j.abi.datatypes.Bool;
 import org.web3j.abi.datatypes.Function;
 import org.web3j.abi.datatypes.Type;
 import org.web3j.abi.datatypes.Utf8String;
-import org.web3j.abi.datatypes.generated.Bytes32;
 import org.web3j.abi.datatypes.generated.Uint256;
+import org.web3j.abi.datatypes.generated.Uint8;
 import org.web3j.crypto.Hash;
 import org.web3j.protocol.Web3j;
 import org.web3j.protocol.core.DefaultBlockParameterName;
@@ -24,6 +25,12 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 
+/**
+ * Client for interacting with RevocationList smart contract.
+ * 
+ * SCOR-AHIBE Principle: 1 on-chain key = 1 off-chain file.
+ * Uses direct CID pointer lookup - no aggregation or Merkle proofs.
+ */
 public class RevocationListClient implements Closeable {
 
     private final Web3j web3;
@@ -38,59 +45,78 @@ public class RevocationListClient implements Closeable {
      * Fetch revocation record from blockchain using static key (ID only).
      * 
      * @param holderId The holder ID
-     * @return Optional RevocationRecord containing epoch and pointer, empty if not found
+     * @return Optional RevocationRecord containing epoch, pointer, version and status
      */
     public Optional<RevocationRecord> fetchRecord(String holderId) {
         byte[] keyBytes = computeStaticKey(holderId);
         Function function = new Function(
                 "getRevocationInfo",
-                List.of(new Bytes32(keyBytes)),
+                List.of(new org.web3j.abi.datatypes.generated.Bytes32(keyBytes)),
                 Arrays.asList(
-                    new TypeReference<Uint256>() {},
-                    new TypeReference<Utf8String>() {}
+                    new TypeReference<Uint256>() {},  // epoch
+                    new TypeReference<Utf8String>() {}, // ptr
+                    new TypeReference<Uint256>() {},  // version
+                    new TypeReference<Uint8>() {}     // status (enum)
                 )
         );
 
         return executeContractCall(function).map(decoded -> {
-            if (decoded.size() < 2) {
+            if (decoded.size() < 4) {
                 return null;
             }
             
             Uint256 epochValue = (Uint256) decoded.get(0);
             Utf8String ptrValue = (Utf8String) decoded.get(1);
+            Uint256 versionValue = (Uint256) decoded.get(2);
+            
+            // Status is an enum, decode as uint8
+            BigInteger statusBigInt;
+            Object statusObj = decoded.get(3);
+            if (statusObj instanceof Uint8) {
+                statusBigInt = ((Uint8) statusObj).getValue();
+            } else if (statusObj instanceof Uint256) {
+                statusBigInt = ((Uint256) statusObj).getValue();
+            } else {
+                statusBigInt = BigInteger.ZERO;
+            }
             
             BigInteger epoch = epochValue.getValue();
-            String ptr = (String) ptrValue.getValue();
+            String ptr = ptrValue.getValue();
             
-            // If epoch is 0, record is empty
-            if (epoch.equals(BigInteger.ZERO) && (ptr == null || ptr.isEmpty())) {
+            // If epoch is 0 and version is 0, record is empty
+            if (epoch.equals(BigInteger.ZERO) && versionValue.getValue().equals(BigInteger.ZERO)) {
                 return null;
             }
             
-            return new RevocationRecord(epoch.longValue(), ptr);
+            return new RevocationRecord(
+                epoch.longValue(), 
+                ptr, 
+                versionValue.getValue().longValue(),
+                statusBigInt.intValue()
+            );
         });
     }
 
     /**
-     * @deprecated Use fetchRecord() instead. This method is kept for backward compatibility.
-     * Fetch pointer using old dynamic key mechanism (ID || epoch).
+     * Check if a holder is currently revoked.
+     * 
+     * @param holderId The holder ID
+     * @return true if holder is revoked, false otherwise
      */
-    @Deprecated
-    public Optional<String> fetchPointer(String holderId, String epoch) {
-        byte[] keyBytes = computeKey(holderId, epoch);
+    public boolean isRevoked(String holderId) {
+        byte[] keyBytes = computeStaticKey(holderId);
         Function function = new Function(
-                "getRevocationInfo",
-                List.of(new Bytes32(keyBytes)),
-                List.of(new TypeReference<Utf8String>() {})
+                "isRevoked",
+                List.of(new org.web3j.abi.datatypes.generated.Bytes32(keyBytes)),
+                List.of(new TypeReference<Bool>() {})
         );
 
-        return executeContractCall(function).flatMap(decoded -> {
-            if (decoded.isEmpty()) {
-                return Optional.empty();
-            }
-            String pointer = (String) decoded.get(0).getValue();
-            return pointer.isEmpty() ? Optional.empty() : Optional.of(pointer);
-        });
+        return executeContractCall(function)
+                .map(decoded -> {
+                    if (decoded.isEmpty()) return false;
+                    return ((Bool) decoded.get(0)).getValue();
+                })
+                .orElse(false);
     }
 
     /**
@@ -156,7 +182,7 @@ public class RevocationListClient implements Closeable {
     }
 
     /**
-     * Compute static key from holder ID only (for new contract structure).
+     * Compute static key from holder ID only.
      * 
      * @param holderId The holder ID
      * @return The keccak256 hash of holderId
@@ -166,23 +192,8 @@ public class RevocationListClient implements Closeable {
         return Hash.sha3(holderBytes);
     }
 
-    /**
-     * @deprecated Use computeStaticKey() instead. This method is kept for backward compatibility.
-     * Compute dynamic key from holder ID and epoch (old mechanism).
-     */
-    @Deprecated
-    public static byte[] computeKey(String holderId, String epoch) {
-        byte[] holderBytes = holderId.getBytes(StandardCharsets.UTF_8);
-        byte[] epochBytes = epoch.getBytes(StandardCharsets.UTF_8);
-        byte[] concatenated = new byte[holderBytes.length + epochBytes.length];
-        System.arraycopy(holderBytes, 0, concatenated, 0, holderBytes.length);
-        System.arraycopy(epochBytes, 0, concatenated, holderBytes.length, epochBytes.length);
-        return Hash.sha3(concatenated);
-    }
-
     @Override
     public void close() throws IOException {
         web3.shutdown();
     }
 }
-
