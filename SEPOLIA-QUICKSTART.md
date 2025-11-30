@@ -10,7 +10,7 @@ Deploy and test SCOR-AHIBE on Ethereum Sepolia testnet in under 10 minutes.
 - **Sepolia ETH** ([Faucet](https://sepoliafaucet.com/))
 - **RPC URL** from [Alchemy](https://www.alchemy.com/) or [Infura](https://www.infura.io/)
 
-## Quick Start (10 commands)
+## Quick Start
 
 ```powershell
 # 1. Setup
