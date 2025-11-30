@@ -76,11 +76,6 @@ SCOR-AHIBE achieves:
 - [x] **Circuit Breaker** for IPFS resilience
 - [x] **CSV Benchmark** export for analysis
 
-### Security
-- [x] **Native Pairing Required** - No simulated fallback, cryptographically secure
-- [x] **Proper HIBE Parameters** - Independent t parameter per Boneh-Boyen spec
-- [x] **Constant-time Operations** - Timing attack resistant via blst library
-
 ### Verification Logic
 
 | Condition | Result |
