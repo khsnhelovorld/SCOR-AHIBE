@@ -74,13 +74,12 @@ public class NativeBLS12Pairing {
         
         try {
             byte[] msg = input.getBytes(StandardCharsets.UTF_8);
-            byte[] dst = AHIBE_DST_G1.getBytes(StandardCharsets.UTF_8);
             
-            // Use reflection to call native hash_to
+            // jblst 0.3.11 API: hash_to(byte[] msg, String dst) returns P1
             Class<?> p1Class = Class.forName("supranational.blst.P1");
             Object point = p1Class.getDeclaredConstructor().newInstance();
-            Method hashTo = p1Class.getMethod("hash_to", byte[].class, byte[].class);
-            hashTo.invoke(point, msg, dst);
+            Method hashTo = p1Class.getMethod("hash_to", byte[].class, String.class);
+            hashTo.invoke(point, msg, AHIBE_DST_G1);
             
             Method compress = p1Class.getMethod("compress");
             return (byte[]) compress.invoke(point);
@@ -100,12 +99,12 @@ public class NativeBLS12Pairing {
         
         try {
             byte[] msg = input.getBytes(StandardCharsets.UTF_8);
-            byte[] dst = AHIBE_DST_G2.getBytes(StandardCharsets.UTF_8);
             
+            // jblst 0.3.11 API: hash_to(byte[] msg, String dst) returns P2
             Class<?> p2Class = Class.forName("supranational.blst.P2");
             Object point = p2Class.getDeclaredConstructor().newInstance();
-            Method hashTo = p2Class.getMethod("hash_to", byte[].class, byte[].class);
-            hashTo.invoke(point, msg, dst);
+            Method hashTo = p2Class.getMethod("hash_to", byte[].class, String.class);
+            hashTo.invoke(point, msg, AHIBE_DST_G2);
             
             Method compress = p2Class.getMethod("compress");
             return (byte[]) compress.invoke(point);
@@ -172,9 +171,10 @@ public class NativeBLS12Pairing {
             Object p1Affine = p1AffineClass.getDeclaredConstructor(byte[].class).newInstance((Object) g1Bytes);
             Object p1 = p1Class.getDeclaredConstructor(p1AffineClass).newInstance(p1Affine);
             
-            byte[] scalarBytes = toScalarBytes(scalar);
-            Method mult = p1Class.getMethod("mult", byte[].class);
-            mult.invoke(p1, (Object) scalarBytes);
+            // jblst 0.3.11 API: mult(BigInteger) - direct BigInteger support
+            BigInteger reduced = BLS12Constants.reduceModOrder(scalar);
+            Method mult = p1Class.getMethod("mult", BigInteger.class);
+            mult.invoke(p1, reduced);
             
             Method compress = p1Class.getMethod("compress");
             return (byte[]) compress.invoke(p1);
@@ -199,9 +199,10 @@ public class NativeBLS12Pairing {
             Object p2Affine = p2AffineClass.getDeclaredConstructor(byte[].class).newInstance((Object) g2Bytes);
             Object p2 = p2Class.getDeclaredConstructor(p2AffineClass).newInstance(p2Affine);
             
-            byte[] scalarBytes = toScalarBytes(scalar);
-            Method mult = p2Class.getMethod("mult", byte[].class);
-            mult.invoke(p2, (Object) scalarBytes);
+            // jblst 0.3.11 API: mult(BigInteger) - direct BigInteger support
+            BigInteger reduced = BLS12Constants.reduceModOrder(scalar);
+            Method mult = p2Class.getMethod("mult", BigInteger.class);
+            mult.invoke(p2, reduced);
             
             Method compress = p2Class.getMethod("compress");
             return (byte[]) compress.invoke(p2);

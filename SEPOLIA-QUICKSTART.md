@@ -10,7 +10,7 @@ Deploy and test SCOR-AHIBE on Ethereum Sepolia testnet in under 10 minutes.
 - **Sepolia ETH** ([Faucet](https://sepoliafaucet.com/))
 - **RPC URL** from [Alchemy](https://www.alchemy.com/) or [Infura](https://www.infura.io/)
 
-## Quick Start (10 commands)
+## Quick Start
 
 ```powershell
 # 1. Setup
@@ -75,7 +75,7 @@ $env:DELEGATE_KEY_SECRET="your-secure-passphrase"
 npx hardhat console --network sepolia
 ```
 ```javascript
-const c = await ethers.getContractAt("RevocationList", "<CONTRACT_ADDRESS>")
+const c = await ethers.getContractAt("RevocationList", "0xFf2B49eee527302D976DE1640848B45691dDacC6")
 const k = ethers.keccak256(ethers.toUtf8Bytes("holder:alice@example.com"))
 await (await c.unrevoke(k)).wait()
 .exit

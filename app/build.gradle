@@ -14,6 +14,9 @@ plugins {
 repositories {
     // Use Maven Central for resolving dependencies.
     mavenCentral()
+    maven { 
+        url "https://dl.cloudsmith.io/public/consensys/maven/maven/" 
+    }
 }
 
 dependencies {
@@ -23,12 +26,10 @@ dependencies {
     // HKDF for secure key derivation
     implementation 'org.bouncycastle:bcprov-jdk18on:1.78.1'
     
-    // NOTE: Native BLS12-381 library (jblst) is OPTIONAL
-    // The system will automatically use simulated implementation if native is unavailable.
-    // To enable native pairing, add to libs folder or use:
-    //   implementation 'tech.pegasys:jblst:0.3.11' (requires Consensys Maven repo)
-    // The NativeBLS12Pairing class gracefully handles missing native library.
-    
+    // Native BLS12-381 library (jblst) is REQUIRED for cryptographic security
+    // Application will fail to start if native library is unavailable
+    implementation 'tech.pegasys:jblst:0.3.11'
+
     implementation libs.web3j.core
     implementation libs.jackson.databind
     // Jackson support for Java 8 date/time types
@@ -112,4 +113,11 @@ task runBatchPublisher(type: JavaExec) {
             args(project.property('appArgs').split(','))
         }
     }
+}
+
+task runJblstTest(type: JavaExec) {
+    group = 'application'
+    description = 'Discover jblst API methods'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.project.ahibe.JblstApiTest'
 }
