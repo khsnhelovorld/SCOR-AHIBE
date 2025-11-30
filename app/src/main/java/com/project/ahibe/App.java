@@ -104,8 +104,8 @@ public class App {
 
             // Verify from blockchain and IPFS
             DeploymentRegistry registry = new DeploymentRegistry(Paths.get("deployments"));
-            // Try to load deployment from any network (hardhat, sepolia, mumbai, etc.)
-            String[] networks = {"hardhat", "sepolia", "mumbai", "goerli"};
+            // Try to load deployment from supported networks (localhost or sepolia)
+            String[] networks = {"hardhat", "localhost", "sepolia"};
             for (String network : networks) {
                 registry.load(network).ifPresent(deployment -> {
                     String rpcUrl = System.getenv().getOrDefault("ETH_RPC_URL", 

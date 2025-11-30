@@ -63,7 +63,8 @@ SCOR-AHIBE achieves:
 ## Features
 
 ### Core Features
-- [x] **BLS12-381 Pairing** - ~128-bit security with native library support
+- [x] **BLS12-381 Pairing** - ~128-bit security with native blst library (required)
+- [x] **Optimized Ciphertext** - Compact 176-byte structure (U, V[], E)
 - [x] **AHIBE Encryption** - Hierarchical key derivation (Holder → Epoch)
 - [x] **Off-chain Storage** - IPFS with 1 file per holder (direct CID lookup)
 - [x] **O(1) On-chain** - Static key per holder (not per epoch)
@@ -74,6 +75,11 @@ SCOR-AHIBE achieves:
 - [x] **AES-256-GCM** encrypted key export
 - [x] **Circuit Breaker** for IPFS resilience
 - [x] **CSV Benchmark** export for analysis
+
+### Security
+- [x] **Native Pairing Required** - No simulated fallback, cryptographically secure
+- [x] **Proper HIBE Parameters** - Independent t parameter per Boneh-Boyen spec
+- [x] **Constant-time Operations** - Timing attack resistant via blst library
 
 ### Verification Logic
 
@@ -95,6 +101,9 @@ SCOR-AHIBE achieves:
 | **IPFS** | Any | Ciphertext storage |
 | **Gradle** | 8.x | Java build |
 | **npm** | 9+ | JS dependencies |
+
+### Native Library
+The BLS12-381 pairing requires the native blst library (auto-included via Gradle dependency `tech.pegasys:jblst:0.3.11`). Supports Windows, Linux, macOS (x64, arm64).
 
 ### Optional
 - **IPFS Desktop** - Easiest IPFS setup for development

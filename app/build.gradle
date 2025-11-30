@@ -26,11 +26,9 @@ dependencies {
     // HKDF for secure key derivation
     implementation 'org.bouncycastle:bcprov-jdk18on:1.78.1'
     
-    // NOTE: Native BLS12-381 library (jblst) is OPTIONAL
-    // The system will automatically use simulated implementation if native is unavailable.
-    // To enable native pairing, add to libs folder or use:
+    // Native BLS12-381 library (jblst) is REQUIRED for cryptographic security
+    // Application will fail to start if native library is unavailable
     implementation 'tech.pegasys:jblst:0.3.11'
-    // The NativeBLS12Pairing class gracefully handles missing native library.
 
     implementation libs.web3j.core
     implementation libs.jackson.databind
