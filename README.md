@@ -20,7 +20,7 @@ SCOR-AHIBE is a reference implementation for efficient, verifiable credential re
 
 - **AHIBE (Attribute-based Hierarchical IBE)** for time-bound credential encryption
 - **Blockchain** for immutable revocation anchoring with O(1) storage
-- **IPFS** for scalable off-chain ciphertext storage (1 holder = 1 file)
+- **IPFS** for scalable off-chain ciphertext storage
 
 ### Problem Statement
 
@@ -40,39 +40,7 @@ SCOR-AHIBE achieves:
 | Privacy | Leaks query patterns | **Encrypted** ciphertext |
 | IPFS storage | Shared files | **1 file per holder** |
 
-### Target Users
-
-- **Researchers** exploring IBE-based revocation schemes
-- **Developers** building decentralized identity systems
-- **Organizations** requiring scalable credential management
-
-### Academic Reference
-
-This implementation accompanies the research paper:
-> *"SCOR-AHIBE: Efficient Verifiable Revocation for Attribute-based Hierarchical Identity-Based Encryption"* (2025)
-
 ---
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                          SCOR-AHIBE System                              │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
-│  ┌─────────┐    ┌─────────┐    ┌─────────┐    ┌──────────────────────┐ │
-│  │   PKG   │───▶│ Issuer  │───▶│ Holder  │    │      Verifier        │ │
-│  │ (Setup) │    │(Revoke) │    │(Delegate│    │  (Check + Decrypt)   │ │
-│  └─────────┘    └────┬────┘    └─────────┘    └──────────┬───────────┘ │
-│                      │                                    │             │
-│                      ▼                                    ▼             │
-│              ┌───────────────┐                ┌───────────────────────┐ │
-│              │     IPFS      │◀──────────────▶│     Blockchain        │ │
-│              │  (Ciphertext) │                │  (Pointer + Epoch)    │ │
-│              └───────────────┘                └───────────────────────┘ │
-│                                                                         │
-└─────────────────────────────────────────────────────────────────────────┘
-```
 
 ### Components
 
@@ -111,10 +79,10 @@ This implementation accompanies the research paper:
 
 | Condition | Result |
 |-----------|--------|
-| No record found | ✅ VALID |
-| `T_check < T_rev` | ✅ VALID (before revocation) |
-| `T_check ≥ T_rev` AND `Status = ACTIVE` | ✅ VALID (un-revoked) |
-| `T_check ≥ T_rev` AND `Status = REVOKED` | ❌ REVOKED |
+| No record found |  VALID |
+| `T_check < T_rev` |  VALID (before revocation) |
+| `T_check ≥ T_rev` AND `Status = ACTIVE` |  VALID (un-revoked) |
+| `T_check ≥ T_rev` AND `Status = REVOKED` |  REVOKED |
 
 ---
 
@@ -130,7 +98,7 @@ This implementation accompanies the research paper:
 
 ### Optional
 - **IPFS Desktop** - Easiest IPFS setup for development
-- **Sepolia ETH** - For testnet deployment ([Faucet](https://sepoliafaucet.com/))
+- **Sepolia ETH** - For testnet deployment
 
 ---
 
@@ -152,7 +120,7 @@ Launch **IPFS Desktop** or run:
 ipfs daemon
 ```
 
-### 3. Local Test (5 commands)
+### 3. Local Test
 
 ```powershell
 # Terminal 1: Start local blockchain
@@ -182,7 +150,6 @@ See **[Usage.md](Usage.md)** for comprehensive scenarios including:
 - Batch revocation
 - Un-revoke mechanism
 - Performance benchmarking
-- Compact JSON format
 
 ### Quick Reference
 
@@ -230,51 +197,6 @@ IPFS_PORT=5001
 # Security
 DELEGATE_KEY_SECRET=your-secure-passphrase
 ```
-
----
-
-## Project Structure
-
-```
-SCOR-AHIBE/
-├── app/src/main/java/com/project/ahibe/
-│   ├── core/                    # Business logic
-│   │   ├── IssuerService.java   # Revocation publishing
-│   │   ├── HolderService.java   # Key derivation
-│   │   ├── VerifierService.java # Status verification
-│   │   └── PkgService.java      # PKG bootstrap
-│   ├── crypto/                  # Cryptographic operations
-│   │   ├── AhibeService.java    # High-level AHIBE API
-│   │   ├── bls12/               # BLS12-381 implementation
-│   │   └── HashingUtils.java    # Hashing utilities
-│   ├── eth/                     # Blockchain integration
-│   │   ├── RevocationListClient.java
-│   │   └── Web3jConnectionPool.java
-│   ├── ipfs/                    # IPFS integration
-│   │   ├── IPFSService.java
-│   │   └── CircuitBreaker.java
-│   ├── io/                      # Serialization
-│   │   ├── RevocationRecordWriter.java
-│   │   └── KeySerializer.java
-│   ├── App.java                 # Main demo application
-│   ├── DemoApp.java             # Benchmark runner
-│   ├── HolderApp.java           # Standalone holder
-│   └── VerifierApp.java         # Standalone verifier
-├── contracts/
-│   └── RevocationList.sol       # Smart contract
-├── scripts/
-│   ├── deploy.js                # Contract deployment
-│   ├── publishRevocation.js     # Publish to chain
-│   └── checkRevocation.js       # Query status
-├── test/
-│   └── RevocationList.test.js   # Contract tests
-├── SEPOLIA-QUICKSTART.md        # Testnet guide
-├── IPFS_GUIDE.md                # IPFS configuration
-└── Usage.md                     # Detailed usage scenarios
-```
-
----
-
 ## Documentation
 
 | Document | Description |
@@ -298,17 +220,3 @@ This project is licensed under the **MIT License** - see [LICENSE](LICENSE) for 
 - [Web3j](https://github.com/web3j/web3j) - Ethereum Java client
 - [Hardhat](https://hardhat.org/) - Ethereum development environment
 - [IPFS](https://ipfs.tech/) - Decentralized storage
-
----
-
-## Citation
-
-```bibtex
-@inproceedings{scorahibe2025,
-  title     = {SCOR-AHIBE: Efficient Verifiable Revocation for 
-               Attribute-based Hierarchical Identity-Based Encryption},
-  author    = {[Authors]},
-  booktitle = {[Conference]},
-  year      = {2025}
-}
-```

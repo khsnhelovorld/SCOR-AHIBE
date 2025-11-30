@@ -28,7 +28,7 @@ dependencies {
     // To enable native pairing, add to libs folder or use:
     //   implementation 'tech.pegasys:jblst:0.3.11' (requires Consensys Maven repo)
     // The NativeBLS12Pairing class gracefully handles missing native library.
-    
+
     implementation libs.web3j.core
     implementation libs.jackson.databind
     // Jackson support for Java 8 date/time types
